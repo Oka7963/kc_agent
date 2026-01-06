@@ -1,8 +1,11 @@
 import cv2
 import time
+import json
+import os
 
-WINDOW_NAME = "switch_image"
-BASE_IMAGE = "screenshots\\port.png"
+WINDOW_NAME = "kc_simulator"
+IMAGE_PREFIX = "screenshots\\"
+CROPS_PREFIX = "crops\\"
 
 # 視覺效果
 BOX_COLOR = (0, 0, 255)      # 紅色 (BGR)
@@ -10,20 +13,21 @@ BOX_THICKNESS = 2
 HIT_HIGHLIGHT_MS = 250
 HIT_THICKNESS = 4
 
-# 你可以用 (x, y, w, h) 來定義區域；命中後切換到 target
-# 每張圖片最多 3 個區域
-REGIONS_MAP = {
-    "screenshots\\port.png": [
-        {"name": "TL_50x50_to_A", "rect": (0, 0, 50, 50), "target": "screenshots\\next_battle_selection.png"},
-        # {"name": "TR_50x50_to_B", "rect": (590, 0, 50, 50), "target": "b.png"},
-        # {"name": "BL_50x50_to_C", "rect": (0, 430, 50, 50), "target": "c.png"},
-    ],
-    "screenshots\\next_battle_selection.png": [
-        {"name": "TL_50x50_back_to_base", "rect": (0, 0, 50, 50), "target": "screenshots\\port.png"},
-        # 也可以再加第2、3個區域
-    ],
-    # "b.png": [...最多3個...]
-}
+def load_regions_map(json_path: str) -> dict:
+    """Load regions map from JSON file and convert rect lists to tuples."""
+    try:
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # Convert rect lists to tuples for consistency with the rest of the code
+        for regions in data.values():
+            for region in regions:
+                if 'rect' in region and isinstance(region['rect'], list):
+                    region['rect'] = tuple(region['rect'])
+        return data
+    except Exception as e:
+        print(f"Error loading regions map: {e}")
+        return {}
 
 def load_bgr(path: str):
     img = cv2.imread(path, cv2.IMREAD_COLOR)
@@ -46,6 +50,7 @@ def rect_to_xyxy(rect):
 
 class ImageSwitcher:
     def __init__(self, base_path: str, regions_map: dict):
+        # here we pass the path without prefix
         enforce_region_limit(regions_map, limit=3)
 
         self.regions_map = regions_map
@@ -68,6 +73,9 @@ class ImageSwitcher:
             self.images[path] = load_bgr(path)
         self.current_path = path
         self.current = self.images[path]
+        # Resize window to match new image size
+        height, width = self.current.shape[:2]
+        cv2.resizeWindow(WINDOW_NAME, width, height)
 
     def on_mouse(self, event, x, y, flags, param):
         if event != cv2.EVENT_LBUTTONDOWN:
@@ -114,10 +122,42 @@ class ImageSwitcher:
 
         return vis
 
-def main():
-    switcher = ImageSwitcher(BASE_IMAGE, REGIONS_MAP)
 
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+def image_file_to_path(image_file):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), IMAGE_PREFIX, image_file)
+
+def main():
+    # Load regions map from JSON
+    json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'regions_map.json')
+    regions_map = load_regions_map(json_path)
+    
+    if not regions_map:
+        print(f"Error: No regions map loaded from {json_path}")
+        print("Make sure the file exists and has valid JSON content with at least one image configuration.")
+        return
+    
+    # Use the first image in the regions map as the base image
+    base_image = next(iter(regions_map.keys()))
+    print(f"Using base image: {base_image}")
+    print(f"Loaded regions map with {len(regions_map)} image configurations")
+    
+    # Verify the base image exists on disk
+    if not os.path.exists(base_image):
+        print(f"Error: Base image '{base_image}' not found on disk")
+        print("Please make sure the image file exists at the specified path.")
+        return
+    
+    switcher = ImageSwitcher(base_image, regions_map)
+
+    # Set window to image size
+    img = cv2.imread(base_image)
+    if img is not None:
+        height, width = img.shape[:2]
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(WINDOW_NAME, width, height)
+    else:
+        cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    
     cv2.setMouseCallback(WINDOW_NAME, switcher.on_mouse)
 
     while True:

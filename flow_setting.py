@@ -173,7 +173,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right)
 
-        right_layout.addWidget(QtWidgets.QLabel("Regions (max 3 per image)"))
+        right_layout.addWidget(QtWidgets.QLabel("Regions (max 6 per image)"))
         right_layout.addWidget(self.list_regions, 1)
 
         form = QtWidgets.QFormLayout()
@@ -400,14 +400,18 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         Output JSON structure:
         {
-          "base.png": [ {"name":..., "rect":[x,y,w,h], "target":"a.png"}, ... ],
-          "a.png":    [ ... ]
+          "screenshots/base.png": [ {"name":..., "rect":[x,y,w,h], "target":"screenshots/a.png"}, ... ],
+          "screenshots/a.png":    [ ... ]
         }
         """
-        use_basename = self.chk_basename.isChecked()
-
         def norm(p: str) -> str:
-            return Path(p).name if use_basename else str(Path(p))
+            # Always use forward slashes for consistency
+            path = Path(p)
+            if path.is_absolute():
+                # Convert to relative path from script directory
+                rel_path = path.relative_to(Path(__file__).parent)
+                return str(rel_path).replace('\\', '/')
+            return str(Path('screenshots') / path.name).replace('\\', '/')
 
         out = {}
         for img_path, regions in self.regions_map.items():
@@ -424,7 +428,8 @@ class MainWindow(QtWidgets.QMainWindow):
         crop_dir.mkdir(parents=True, exist_ok=True)
         for img_path, regions in self.regions_map.items():
             qimg = self.load_qimage(img_path)
-            stem_dir = crop_dir / Path(img_path).stem
+            img_stem = Path(img_path).stem
+            stem_dir = crop_dir / img_stem
             stem_dir.mkdir(parents=True, exist_ok=True)
 
             for r in regions:
@@ -433,6 +438,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 crop = qimg.copy(rect)
                 out_path = stem_dir / f"{r.name}.png"
+                # Update the region's name to include the crop path
+                r.name = f"crops/{img_stem}/{r.name}.png"
                 crop.save(str(out_path), "PNG")
 
     def on_save(self):
