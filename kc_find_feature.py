@@ -131,11 +131,13 @@ class FeatureMatcher:
         ratio: float = 0.75,
         ransac_threshold: float = 5.0
     ) -> Optional[MatchResult]:
-        """Find the template in the given scene or current window capture.
+        """
+        Note: you can treate as main function entry for identify scene
+        Find the template in the given scene or current window capture.
 
         Args:
-            scene_bgr: Optional BGR image to search in (captures window if None)
-            min_matches: Minimum good matches to attempt homography
+            scene_bgr: BGR image to search in (captures window if None)
+            min_matches: Minimum good matches to attempt homography (H matrix)
             ratio: Lowe's ratio test threshold
             ransac_threshold: RANSAC reprojection threshold in pixels
 
@@ -143,7 +145,8 @@ class FeatureMatcher:
             MatchResult if found, None otherwise
         """
         if scene_bgr is None:
-            logging.info("Capturing window...")
+            # capture window since no scene is provided
+            logger.info("Capturing window...")
             scene_bgr = self.capture_window()
 
         # Convert to grayscale for feature detection
@@ -169,7 +172,7 @@ class FeatureMatcher:
         if len(good) < min_matches:
             return None
 
-        # Estimate homography
+        # Estimate homography -> use src_pts to map to dst_pts to find the points in the scene (H matrix)
         src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
 
@@ -246,101 +249,43 @@ class FeatureMatcher:
 
         return vis
 
-def main():
+if __name__ == "__main__":
     title = "kc_simulator"
-    template = ".\crops\battle_0\battle_start.png"
+    template = ".\\crops\\battle_0\\battle_start.png"
     matcher = FeatureMatcher(title, template)
+    min_matches=20
+    ratio=0.75
+    ransac_threshold=5.0
 
-def _main():
-    """Command-line interface for feature matching."""
-    parser = argparse.ArgumentParser(description="Feature-based template matching for window content.")
-    parser.add_argument("--title", required=True, help="Window title substring (case-insensitive).")
-    parser.add_argument("--template", required=True, help="Template image path (PNG recommended).")
-    parser.add_argument("--min-matches", type=int, default=20,
-                       help="Minimum good matches to attempt homography.")
-    parser.add_argument("--ratio", type=float, default=0.75,
-                       help="Lowe ratio test threshold.")
-    parser.add_argument("--ransac", type=float, default=5.0,
-                       help="RANSAC reprojection threshold (pixels).")
-    parser.add_argument("--show", action="store_true",
-                       help="Show debug window with visualization.")
-    parser.add_argument("--loop", action="store_true",
-                       help="Run continuously until interrupted.")
-    parser.add_argument("--interval", type=float, default=0.2,
-                       help="Loop interval in seconds.")
-    args = parser.parse_args()
+    def process_frame() -> Dict:
+        """Process a single frame and return results as a dict."""
+        result = matcher.find_template(
+            min_matches=min_matches,
+            ratio=ratio,
+            ransac_threshold=ransac_threshold
+        )
+        if result != None and result.found:
+            # debug visualize match
+            matcher.visualize_match(result)
 
-    try:
-        # Initialize the feature matcher
-        matcher = FeatureMatcher(args.title, args.template)
-
-        def process_frame() -> Dict:
-            """Process a single frame and return results as a dict."""
-            result = matcher.find_template(
-                min_matches=args.min_matches,
-                ratio=args.ratio,
-                ransac_threshold=args.ransac
-            )
-
-            # Prepare output dictionary
+            # Prepare match result dictionary
             out = {
                 "found": result.found if result else False,
-                "title_query": args.title,
+                "title_query": title,
                 "window": {
                     "hwnd": matcher.window.hwnd,
                     "client_rect": matcher.window.client_rect,
                     "screen_rect": matcher.window.screen_rect
                 },
                 "method": "ORB+BFMatcher+RANSAC-homography",
-                "min_matches": args.min_matches,
-                "ratio": args.ratio,
-                "ransac_reproj_thresh": args.ransac,
+                "min_matches": min_matches,
+                "ratio": ratio,
+                "ransac_reproj_thresh": ransac_threshold,
             }
+            logger.debug(json.dumps(out, ensure_ascii=False, indent=2))
+        return out
 
-            if result and result.found:
-                out.update({
-                    "score": result.score,
-                    "inliers": result.inliers,
-                    "good_matches": result.matches,
-                    "bbox_client_xywh": list(result.bbox_xywh),
-                    "bbox_screen_xywh": list(result.bbox_screen_xywh),
-                    "proj_corners_client_xy": result.proj_corners.tolist() if result.proj_corners is not None else []
-                })
+    result = process_frame()
 
-                if args.show:
-                    matcher.visualize_match(result)
+    cv2.waitKey(0)
 
-            return out
-
-        # Single run mode
-        if not args.loop:
-            result = process_frame()
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-
-            if args.show:
-                cv2.waitKey(0)
-            return 0 if result["found"] else 1
-
-        # Continuous mode
-        try:
-            while True:
-                result = process_frame()
-                print(json.dumps(result, ensure_ascii=False, indent=2))
-                time.sleep(max(0.01, args.interval))
-        except KeyboardInterrupt:
-            pass
-
-        return 0
-
-    except Exception as e:
-        print(f"ERROR: {str(e)}", file=sys.stderr)
-        return 1
-    finally:
-        if args.show:
-            cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-
-#python kc_find_feature.py --title "kc_simulator" --template .\crops\battle_0\battle_start.png --show
