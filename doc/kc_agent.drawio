@@ -297,7 +297,7 @@
         <mxCell id="fOGShgQQmg8d1P_vVepC-27" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button sample" vertex="1">
           <mxGeometry height="30" width="80" x="1780" y="990" as="geometry" />
         </mxCell>
-        <mxCell id="fOGShgQQmg8d1P_vVepC-29" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="find the key in screen shot using button file name" vertex="1">
+        <mxCell id="fOGShgQQmg8d1P_vVepC-29" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="click the coordination and go back to screenshots" vertex="1">
           <mxGeometry height="150" width="120" x="2040" y="770" as="geometry" />
         </mxCell>
         <mxCell id="fOGShgQQmg8d1P_vVepC-31" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button coordination" vertex="1">
