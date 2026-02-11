@@ -440,3 +440,4 @@ if __name__ == "__main__":
 
     cv2.waitKey(0)
 
+# test usage: python idc_find_feature.py

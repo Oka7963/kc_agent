@@ -1,0 +1,312 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.2.9 Chrome/140.0.7339.249 Electron/38.7.2 Safari/537.36" version="29.2.9">
+  <diagram name="第 1 页" id="vV4gFXFazkKMBTpelFxG">
+    <mxGraphModel dx="1210" dy="825" grid="1" gridSize="10" guides="0" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="dBOrWiMBTrON0ejexMyE-5" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="450" y="295" />
+              <mxPoint x="450" y="295" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="kc_simulator.py&lt;div&gt;poi&lt;/div&gt;" vertex="1">
+          <mxGeometry height="80" width="140" x="270" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-3" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-10">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="850" y="295" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="kc_agent.py" vertex="1">
+          <mxGeometry height="70" width="130" x="560" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-4" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="click" vertex="1">
+          <mxGeometry height="30" width="60" x="740" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-6" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="crops" vertex="1">
+          <mxGeometry height="30" width="60" x="450" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-7" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="show simulate screen and provide ROI and button for test" vertex="1">
+          <mxGeometry height="40" width="170" x="250" y="340" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-8" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="main decision making process, handle point and click and identify scene&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="40" width="210" x="520" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-10" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="mouse/keyboard" vertex="1">
+          <mxGeometry height="70" width="130" x="850" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-13" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=classic;startFill=1;" target="dBOrWiMBTrON0ejexMyE-2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-12" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="key crops&lt;div&gt;text db&lt;/div&gt;" vertex="1">
+          <mxGeometry height="70" width="130" x="560" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-14" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="query/identify" vertex="1">
+          <mxGeometry height="30" width="60" x="640" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-16" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="data base provide for decision making" vertex="1">
+          <mxGeometry height="30" width="60" x="580" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-17" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;font style=&quot;font-size: 85px;&quot;&gt;Work Flow&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="440" x="100" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-23" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-18" parent="1" style="html=1;align=center;verticalAlign=top;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;" value="Init" vertex="1">
+          <mxGeometry height="40" width="140" x="260" y="780" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-21" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-18" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-20" parent="1" style="ellipse;fillColor=strokeColor;html=1;" value="" vertex="1">
+          <mxGeometry height="30" width="30" x="310" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-28" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-27">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="150" y="1070" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-46" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-29">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="330" y="950" />
+              <mxPoint x="330" y="950" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-22" parent="1" style="html=1;align=center;verticalAlign=top;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;" value="Identify scene" vertex="1">
+          <mxGeometry height="40" width="140" x="120" y="920" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-24" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div style=&quot;&quot;&gt;&lt;b style=&quot;font-size: 20px; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Init&lt;/b&gt;&lt;/div&gt;&lt;div&gt;load work flow from database,&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="310" x="620" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-25" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div style=&quot;&quot;&gt;&lt;b style=&quot;font-size: 20px; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Identify scene&lt;/b&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;identify the screen,&amp;nbsp;&lt;/span&gt;crops the key regions, find action area, follow work flow for action&lt;/div&gt;&lt;div&gt;if hit the work flow, react accordingly, else keep cropsing&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="320" x="620" y="840" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-26" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-22">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="100" y="950" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-31" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-29">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-40" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-22">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="310" y="1020" />
+              <mxPoint x="190" y="1020" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-27" parent="1" style="html=1;align=center;verticalAlign=top;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;" value="Unknown scene" vertex="1">
+          <mxGeometry height="40" width="140" x="240" y="1050" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-30" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-22">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="930" />
+              <mxPoint x="340" y="930" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-29" parent="1" style="html=1;align=center;verticalAlign=top;rounded=1;absoluteArcSize=1;arcSize=10;dashed=0;whiteSpace=wrap;" value="Action" vertex="1">
+          <mxGeometry height="40" width="140" x="400" y="920" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-32" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div style=&quot;&quot;&gt;&lt;b style=&quot;font-size: 20px; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Unknown scene&lt;/b&gt;&lt;/div&gt;&lt;div&gt;unable to identify the scene for a certain amount of time, ask for human intervention.&lt;/div&gt;&lt;div&gt;e.g. 貓襲, 能動分歧, lag...&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="320" x="620" y="920" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-33" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="&lt;div style=&quot;&quot;&gt;&lt;b style=&quot;font-size: 20px; background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Action&lt;/b&gt;&lt;/div&gt;&lt;div&gt;mouse point and click base on work flow,&amp;nbsp;&lt;/div&gt;&lt;div&gt;apply human-like behavior for ban detection&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="320" x="620" y="1000" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-34" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="no workflow hit" vertex="1">
+          <mxGeometry height="30" width="60" x="30" y="930" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-35" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="timeout" vertex="1">
+          <mxGeometry height="30" width="60" x="100" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-36" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-27">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="340" y="1100" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-38" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="wait for human" vertex="1">
+          <mxGeometry height="30" width="60" x="270" y="1100" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-39" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="intervention" vertex="1">
+          <mxGeometry height="30" width="60" x="410" y="1050" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-41" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="resloved" vertex="1">
+          <mxGeometry height="30" width="60" x="200" y="1000" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-42" edge="1" parent="1" source="dBOrWiMBTrON0ejexMyE-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="dBOrWiMBTrON0ejexMyE-29">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="490" y="900" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-43" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="target reached" vertex="1">
+          <mxGeometry height="30" width="80" x="290" y="910" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-44" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="close loop control" vertex="1">
+          <mxGeometry height="40" width="100" x="420" y="870" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-45" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="workflow load" vertex="1">
+          <mxGeometry height="30" width="60" x="210" y="850" as="geometry" />
+        </mxCell>
+        <mxCell id="dBOrWiMBTrON0ejexMyE-47" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="action required" vertex="1">
+          <mxGeometry height="30" width="100" x="280" y="940" as="geometry" />
+        </mxCell>
+        <mxCell id="6NI-0rmJOe-hFoOAGr8O-2" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;font style=&quot;font-size: 85px;&quot;&gt;reference&lt;/font&gt;" vertex="1">
+          <mxGeometry height="30" width="60" x="260" y="1270" as="geometry" />
+        </mxCell>
+        <mxCell id="6NI-0rmJOe-hFoOAGr8O-3" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="Image matching web UI: https://github.com/Vincentqyw/image-matching-webui&lt;div&gt;pip install imcui -&amp;gt; error&lt;/div&gt;&lt;div&gt;&lt;div&gt;&amp;nbsp; × Building wheel for pytlsd (pyproject.toml) did not run successfully.&lt;/div&gt;&lt;div&gt;&amp;nbsp; │ exit code: 1&lt;/div&gt;&lt;div&gt;&amp;nbsp; ╰─&amp;gt; [5 lines of output]&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; running bdist_wheel&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; running build&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; running build_ext&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; building &#39;pytlsd&#39; extension&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; error: Microsoft Visual C++ 14.0 or greater is required. Get it with &quot;Microsoft C++ Build Tools&quot;: https://visualstudio.microsoft.com/visual-cpp-build-tools/&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; [end of output]&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&amp;nbsp; note: This error originates from a subprocess, and is likely not a problem with pip.&lt;/div&gt;&lt;div&gt;&amp;nbsp; ERROR: Failed building wheel for pytlsd&lt;/div&gt;&lt;div&gt;Failed to build pytlsd&lt;/div&gt;&lt;div&gt;error: failed-wheel-build-for-install&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;× Failed to build installable wheels for some pyproject.toml based projects&lt;/div&gt;&lt;div&gt;╰─&amp;gt; pytlsd&lt;/div&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="360" width="480" x="120" y="1350" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-1" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="&lt;font style=&quot;font-size: 85px;&quot;&gt;Data Flow&lt;/font&gt;" vertex="1">
+          <mxGeometry height="110" width="440" x="1230" y="540" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-7" edge="1" parent="1" source="ubEO2nkH3zqn7SVrJl3P-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="ubEO2nkH3zqn7SVrJl3P-6" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-2" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="take screen captcure, use CLIP to identify current scene, match with scene in config file and output its conent&lt;div&gt;if no scene hit, record the current situation (e.g.: 艦隊血量)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="150" width="120" x="1160" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-4" edge="1" parent="1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="ubEO2nkH3zqn7SVrJl3P-2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1060" y="740" />
+              <mxPoint x="1060" y="840" />
+            </Array>
+            <mxPoint x="1080" y="740" as="sourcePoint" />
+            <mxPoint x="1110" y="780" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-3" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Scene Identify" vertex="1">
+          <mxGeometry height="30" width="100" x="1170" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-5" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="POI" vertex="1">
+          <mxGeometry height="30" width="60" x="1030" y="710" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-23" edge="1" parent="1" source="ubEO2nkH3zqn7SVrJl3P-6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-22" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-6" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="from the scene metadata and fleet health, get the next action&#39;s button filename" vertex="1">
+          <mxGeometry height="150" width="120" x="1490" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-10" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="screanshot" vertex="1">
+          <mxGeometry height="30" width="60" x="1070" y="810" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-12" edge="1" parent="1" source="ubEO2nkH3zqn7SVrJl3P-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="ubEO2nkH3zqn7SVrJl3P-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-11" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Script.json" vertex="1">
+          <mxGeometry height="30" width="60" x="1190" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-13" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="scene metadat" vertex="1">
+          <mxGeometry height="30" width="90" x="1330" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-14" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="scene metadata:&lt;div&gt;{&lt;br&gt;&lt;/div&gt;&lt;div&gt;&amp;nbsp; &quot;scene_id&quot;: 1,&lt;/div&gt;&lt;div&gt;&amp;nbsp; &quot;description&quot;: &quot;&quot;,&lt;/div&gt;&lt;div&gt;&amp;nbsp; &quot;keys&quot;: {&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &quot;key1&quot;: {&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;filename&quot;: &quot;key1.png&quot;,&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;action&quot;: &quot;description&quot;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;&amp;nbsp; &amp;nbsp; },&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &quot;key2&quot;: {&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;filename&quot;: &quot;key2.png&quot;,&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;action&quot;: &quot;description&quot;,&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; }&lt;/div&gt;&lt;div&gt;&amp;nbsp; }&lt;/div&gt;&lt;div&gt;}&lt;/div&gt;" vertex="1">
+          <mxGeometry height="250" width="210" x="1120" y="1030" as="geometry" />
+        </mxCell>
+        <mxCell id="ubEO2nkH3zqn7SVrJl3P-16" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="wait_until: if key is not up, don&#39;t proceed&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="270" x="1270" y="330" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-12" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-3">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1050" y="1440" />
+              <mxPoint x="1050" y="1680" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="Identify scene" vertex="1">
+          <mxGeometry height="60" width="120" x="990" y="1410" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-8" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="find key" vertex="1">
+          <mxGeometry height="60" width="120" x="1140" y="1530" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-14" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="situation" vertex="1">
+          <mxGeometry height="60" width="120" x="1100" y="1650" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;" value="do action" vertex="1">
+          <mxGeometry height="60" width="120" x="1380" y="1530" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-7" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="scene ID" vertex="1">
+          <mxGeometry height="30" width="60" x="990" y="1490" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-9" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button position" vertex="1">
+          <mxGeometry height="30" width="60" x="1290" y="1530" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-11" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-10" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="database/script" vertex="1">
+          <mxGeometry height="30" width="60" x="1100" y="1760" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-15" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button to click" vertex="1">
+          <mxGeometry height="30" width="60" x="1200" y="1610" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-17" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Situation Identify" vertex="1">
+          <mxGeometry height="30" width="110" x="1500" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-19" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="ubEO2nkH3zqn7SVrJl3P-6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-18" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Script.db" vertex="1">
+          <mxGeometry height="30" width="60" x="1520" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-20" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;rounded=0;" value="Scene script:&lt;div&gt;1: if any 大破 -&amp;gt; button[&quot;撤退&quot;]&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; else -&amp;gt; button[&quot;進擊&quot;]&lt;/div&gt;&lt;div&gt;2: if true -&amp;gt; button[&quot;單縱陣&quot;]&lt;/div&gt;&lt;div&gt;3: if true -&amp;gt; button[&quot;次&quot;]&lt;/div&gt;&lt;div&gt;4: if &amp;lt;outside input&amp;gt; -&amp;gt; button[&quot;夜戰突入&quot;]&lt;/div&gt;&lt;div&gt;&amp;nbsp; &amp;nbsp; else &amp;lt;outside input&amp;gt; -&amp;gt; button[&quot;追擊停止&quot;]&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="190" width="260" x="1460" y="1020" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-21" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="global: current fleet health bar&lt;div&gt;ship_1: taiha:False&lt;/div&gt;&lt;div&gt;ship_2: taiha: True&lt;/div&gt;&lt;div&gt;..&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="30" width="180" x="1140" y="690" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-30" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-29" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-22" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="find the key in screen shot using button file name" vertex="1">
+          <mxGeometry height="150" width="120" x="1760" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-24" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button file name" vertex="1">
+          <mxGeometry height="30" width="100" x="1640" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-26" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Key Identify" vertex="1">
+          <mxGeometry height="30" width="110" x="1760" y="740" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-28" edge="1" parent="1" source="fOGShgQQmg8d1P_vVepC-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="fOGShgQQmg8d1P_vVepC-22">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-27" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button sample" vertex="1">
+          <mxGeometry height="30" width="80" x="1780" y="990" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-29" parent="1" style="whiteSpace=wrap;html=1;align=left;" value="find the key in screen shot using button file name" vertex="1">
+          <mxGeometry height="150" width="120" x="2040" y="770" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-31" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="button coordination" vertex="1">
+          <mxGeometry height="30" width="120" x="1900" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="fOGShgQQmg8d1P_vVepC-32" parent="1" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;" value="Do Action" vertex="1">
+          <mxGeometry height="30" width="60" x="2070" y="740" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

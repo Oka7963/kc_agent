@@ -1,0 +1,52 @@
+{
+  "screenshots/battle_0.png": [
+    {
+      "name": "battle_start",
+      "rect": [
+        167,
+        202,
+        660,
+        193
+      ],
+      "target": "screenshots/battle_finish.png"
+    }
+  ],
+  "screenshots/battle_1.png": [],
+  "screenshots/battle_2.png": [],
+  "screenshots/battle_3.png": [],
+  "screenshots/battle_4.png": [],
+  "screenshots/battle_finish.png": [
+    {
+      "name": "battle_finish_next",
+      "rect": [
+        864,
+        484,
+        132,
+        113
+      ],
+      "target": "screenshots/score_board.png"
+    }
+  ],
+  "screenshots/battle_finish_wait.png": [],
+  "screenshots/battle_start.png": [],
+  "screenshots/compass.png": [],
+  "screenshots/during_battle.png": [],
+  "screenshots/formation_select.png": [],
+  "screenshots/found_boat.png": [],
+  "screenshots/new_boat.png": [],
+  "screenshots/next_battle_selection.png": [],
+  "screenshots/port.png": [],
+  "screenshots/score_board.png": [
+    {
+      "name": "battle_end",
+      "rect": [
+        887,
+        478,
+        109,
+        116
+      ],
+      "target": "screenshots/port.png"
+    }
+  ],
+  "screenshots/sea_map.png": []
+}
