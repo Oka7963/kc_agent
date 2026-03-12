@@ -51,7 +51,18 @@ TODO: under maintenance
 
 ## Project Structure
 
-### kc_simulator
+```
+kc_agent/
+├── .gitignore          # Git ignore file
+├── README.MD           # Project documentation
+├── kc_simulator/       # Simulator components
+├── key_identify/       # Feature matching components
+├── apply_action/       # Action execution components
+├── utility/            # Helper utilities
+└── logs/               # Log files (ignored by git)
+```
+
+### kc_simulator/
 
 This folder stores the simulator for testing and development purposes.
 
@@ -77,7 +88,7 @@ python kc_simulator.py --config regions_map.json
 
 ---
 
-### key_identify
+### key_identify/
 
 #### idc_find_feature.py
 
@@ -106,6 +117,9 @@ python idc_find_feature.py
 ```
 
 ---
+### apply_action/
+
+Store mouse action releated files.
 
 #### act_mouse_movement.py
 
@@ -129,7 +143,7 @@ python act_mouse_movement.py
 ```
 
 ---
-### utility
+### utility/
 
 Helper functions for the project and scene config files.
 
