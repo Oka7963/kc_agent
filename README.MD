@@ -6,6 +6,7 @@ This project provides a suite of tools for feature matching, window automation, 
 
 - [Project Overview](#project-overview)
 - [Installation](#installation)
+  - [Add the Poi plugin](#add-the-poi-plugin)
 - [Project Structure](#project-structure)
   - [kc_simulator](#kc_simulator)
     - [flow_setting.py](#flow_settingpy)
@@ -48,6 +49,41 @@ pip install pathlib
 ### Setup
 
 TODO: under maintenance
+
+### Add the Poi plugin
+
+The local Poi plugin lives in `poi_plugin/poi-plugin-kcagent`. Poi loads plugins as
+npm packages: it reads the plugin `package.json`, resolves the `main` entry file,
+and uses exports such as `pluginDidLoad`, `pluginWillUnload`, and `reducer` from
+the entry module. This plugin package is named
+`poi-plugin-battle-event-exporter` and posts battle-related events to the local
+receiver at `http://127.0.0.1:8765/poi-event`.
+
+For local development, Poi's plugin guide recommends linking the package into
+Poi's `APPDATA_PATH/plugins` directory with `npm link`. On Windows, run:
+
+```powershell
+cd poi_plugin\poi-plugin-kcagent
+npm link
+
+cd $env:APPDATA\poi\plugins
+npm link poi-plugin-battle-event-exporter
+```
+
+`npm link` may require an elevated shell on some Windows setups. Poi stores its
+Windows app data under `%AppData%\poi`; on Linux and macOS, use Poi's app data
+directory and run the second `npm link` command from its `plugins` subdirectory.
+
+Start the local receiver before enabling the plugin in Poi:
+
+```powershell
+python poi_plugin\battle_receiver.py
+```
+
+Then open Poi's plugin settings, enable **Battle Event Exporter**, and run a
+sortie or practice battle. The receiver prints exported events and appends them
+to `poi_events.jsonl` by default. Run the receiver with `--help` to see options
+such as `--log` and `--summary-only`.
 
 ## Project Structure
 
