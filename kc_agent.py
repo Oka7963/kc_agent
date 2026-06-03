@@ -27,6 +27,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from utility.logger import setup_logger
+
+
+logger = setup_logger(name="kc_agent")
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -404,23 +409,23 @@ class KcAgent:
         self.ctx = RuntimeContext()
 
     async def run(self) -> None:
-        print("[kc_agent] main loop started")
+        logger.info("main loop started")
         while True:
             event = await self.event_q.get()
             try:
                 await self.handle_event(event)
             except Exception as exc:
                 self.ctx.state = AgentState.ERROR
-                print(f"[kc_agent][ERROR] exception while handling {event.type}: {exc!r}")
+                logger.exception("exception while handling %s: %r", event.type, exc)
             finally:
                 self.event_q.task_done()
 
     async def handle_event(self, event: AgentEvent) -> None:
         self.ctx.last_event_id = event.event_id
         if self.ctx.user_paused and event.type != "user_interrupt":
-            print(f"[kc_agent] paused; ignoring event={event.type}")
+            logger.info("paused; ignoring event=%s", event.type)
             return
-        print(f"[kc_agent] state={self.ctx.state} event={event.type}")
+        logger.info("state=%s event=%s", self.ctx.state, event.type)
         handlers = {
             "sortie_start_requested": self.on_sortie_start_requested,
             "map_node_arrived": self.on_map_node_arrived,
@@ -434,7 +439,7 @@ class KcAgent:
         }
         handler = handlers.get(event.type)
         if handler is None:
-            print(f"[kc_agent] unhandled event type={event.type}")
+            logger.warning("unhandled event type=%s", event.type)
             return
         await handler(event)
 
@@ -449,7 +454,12 @@ class KcAgent:
         self.ctx.taiha_latch = False
         self.ctx.taiha_ships.clear()
         self.ctx.state = AgentState.SORTIE_STARTING
-        print(f"[kc_agent] sortie requested: sortie_id={self.ctx.sortie_id} world={self.ctx.current_world} deck={self.ctx.current_deck_id}")
+        logger.info(
+            "sortie requested: sortie_id=%s world=%s deck=%s",
+            self.ctx.sortie_id,
+            self.ctx.current_world,
+            self.ctx.current_deck_id,
+        )
 
     async def on_map_node_arrived(self, event: AgentEvent) -> None:
         map_info = event.payload.get("map") or {}
@@ -460,32 +470,38 @@ class KcAgent:
         self.ctx.current_node_type = map_info.get("node_type", "unknown")
         self.ctx.map_node_id = f"{self.ctx.current_world}-route-{self.ctx.current_route_no}"
         self.ctx.state = AgentState.MAP_NODE_ARRIVED
-        print(f"[kc_agent] node arrived: {self.ctx.map_node_id} type={self.ctx.current_node_type} rashin={map_info.get('rashin_flg')}/{map_info.get('rashin_id')}")
+        logger.info(
+            "node arrived: %s type=%s rashin=%s/%s",
+            self.ctx.map_node_id,
+            self.ctx.current_node_type,
+            map_info.get("rashin_flg"),
+            map_info.get("rashin_id"),
+        )
         if next_scenes:
             first = next_scenes[0]
             await self.request_scene_wait(first["scene"], first.get("required_targets", []), first.get("timeout_ms", 8000), expected.get("ui_wait_reason", "map_node_arrived"), event.event_id, {"sortie_id": self.ctx.sortie_id, "map_node_id": self.ctx.map_node_id, "next_scenes": next_scenes, "next_scene_index": 0})
             self.ctx.state = AgentState.WAIT_FORMATION if first["scene"] == "formation_select" else AgentState.WAIT_COMPASS_OR_PRODUCTION
         else:
-            print("[kc_agent] no expected scene; waiting for further POI event")
+            logger.info("no expected scene; waiting for further POI event")
 
     async def on_formation_selected(self, event: AgentEvent) -> None:
         self.ctx.battle_id = new_id("battle")
         self.ctx.state = AgentState.IN_DAY_BATTLE
         formation = ((event.payload.get("battle") or {}).get("formation") or {}).get("requested")
-        print(f"[kc_agent] formation selected: formation={formation}, battle_id={self.ctx.battle_id}")
+        logger.info("formation selected: formation=%s battle_id=%s", formation, self.ctx.battle_id)
 
     async def on_day_battle_received(self, event: AgentEvent) -> None:
         battle = event.payload.get("battle") or {}
         expected = event.payload.get("expected") or {}
         can_night = battle.get("can_night_battle")
-        print(f"[kc_agent] day battle received: formation={battle.get('formation')} can_night={can_night}")
+        logger.info("day battle received: formation=%s can_night=%s", battle.get("formation"), can_night)
         if can_night:
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
             scene = (expected.get("next_scenes") or [{}])[0]
             await self.request_scene_wait(scene.get("scene", "night_battle_choice"), scene.get("required_targets", ["night_battle_button", "no_night_battle_button"]), scene.get("timeout_ms", 10000), "can_night_battle", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
         else:
             self.ctx.state = AgentState.WAIT_BATTLE_RESULT
-            print("[kc_agent] no night choice expected; wait for battle_result")
+            logger.info("no night choice expected; wait for battle_result")
 
     async def on_battle_result(self, event: AgentEvent) -> None:
         payload = event.payload
@@ -497,8 +513,13 @@ class KcAgent:
         self.ctx.taiha_ships = damage.get("taiha_ships") or []
         self.ctx.state = AgentState.RETREAT_REQUIRED if self.ctx.taiha_latch else AgentState.WAIT_RESULT_CONFIRM
         if self.ctx.taiha_latch:
-            print(f"[kc_agent][SAFETY] taiha detected: {self.ctx.taiha_ships}")
-        print(f"[kc_agent] battle result: rank={battle.get('rank')} boss={battle.get('boss')} taiha={self.ctx.taiha_latch}")
+            logger.warning("taiha detected: %s", self.ctx.taiha_ships)
+        logger.info(
+            "battle result: rank=%s boss=%s taiha=%s",
+            battle.get("rank"),
+            battle.get("boss"),
+            self.ctx.taiha_latch,
+        )
         scenes = expected.get("next_scenes") or []
         if scenes:
             first = scenes[0]
@@ -509,9 +530,9 @@ class KcAgent:
         scene = p.get("scene")
         wait_id = p.get("wait_id")
         corr = event.correlation or p.get("correlation") or {}
-        print(f"[kc_agent] scene_ready: scene={scene} wait_id={wait_id}")
+        logger.info("scene_ready: scene=%s wait_id=%s", scene, wait_id)
         if wait_id != self.ctx.pending_wait_id:
-            print(f"[kc_agent] stale scene_ready ignored: {wait_id} != {self.ctx.pending_wait_id}")
+            logger.warning("stale scene_ready ignored: %s != %s", wait_id, self.ctx.pending_wait_id)
             return
         self.ctx.pending_wait_id = None
         self.ctx.pending_scene = None
@@ -531,26 +552,31 @@ class KcAgent:
                 self.ctx.state = AgentState.WAIT_ACTION_RESULT
             else:
                 self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
-                print("[kc_agent] user input required: choose advance or retreat")
+                logger.info("user input required: choose advance or retreat")
         elif scene == "formation_select":
             self.ctx.state = AgentState.WAIT_FORMATION
-            print("[kc_agent] user input required: select formation")
+            logger.info("user input required: select formation")
         elif scene == "night_battle_choice":
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
-            print("[kc_agent] user input required: choose night battle or no night battle")
+            logger.info("user input required: choose night battle or no night battle")
         else:
-            print(f"[kc_agent] scene ready but no action defined: {scene}")
+            logger.warning("scene ready but no action defined: %s", scene)
 
     async def on_scene_timeout(self, event: AgentEvent) -> None:
-        print(f"[kc_agent][TIMEOUT] scene timeout: {event.payload}")
+        logger.error("scene timeout: %s", event.payload)
         self.ctx.state = AgentState.ERROR
 
     async def on_action_result(self, event: AgentEvent) -> None:
         p = event.payload
         cmd_id = p.get("command_id")
-        print(f"[kc_agent] action_result: command_id={cmd_id} status={p.get('status')} reason={p.get('reason')}")
+        logger.info(
+            "action_result: command_id=%s status=%s reason=%s",
+            cmd_id,
+            p.get("status"),
+            p.get("reason"),
+        )
         if cmd_id != self.ctx.pending_command_id:
-            print(f"[kc_agent] stale action_result ignored: {cmd_id} != {self.ctx.pending_command_id}")
+            logger.warning("stale action_result ignored: %s != %s", cmd_id, self.ctx.pending_command_id)
             return
         self.ctx.pending_command_id = None
         if p.get("status") == "executed":
@@ -561,41 +587,41 @@ class KcAgent:
                     await self.request_scene_wait("advance_or_retreat", advance_scene.get("required_targets", ["advance_button", "retreat_button"]), advance_scene.get("timeout_ms", 10000), "after_result_confirm", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
                     self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
                     return
-            print("[kc_agent] action executed; waiting for POI confirmation")
+            logger.info("action executed; waiting for POI confirmation")
         elif p.get("status") in ("rejected", "failed"):
             self.ctx.state = AgentState.ERROR
-            print("[kc_agent][ERROR] action rejected/failed")
+            logger.error("action rejected/failed")
 
     async def on_user_interrupt(self, event: AgentEvent) -> None:
         action = event.payload.get("action", "pause")
         if action == "pause":
             self.ctx.user_paused = True
             self.ctx.state = AgentState.PAUSED
-            print("[kc_agent] paused by user")
+            logger.info("paused by user")
         elif action == "resume":
             self.ctx.user_paused = False
             self.ctx.state = AgentState.IDLE
-            print("[kc_agent] resumed by user")
+            logger.info("resumed by user")
 
     async def request_scene_wait(self, scene: str, required_targets: list[str], timeout_ms: int, reason: str, trigger_event_id: Optional[str], correlation: dict[str, Any]) -> None:
         wait_id = new_id("wait")
         self.ctx.pending_wait_id = wait_id
         self.ctx.pending_scene = scene
         spec = WaitSpec(wait_id, scene, required_targets, trigger_event_id, timeout_ms, 2, reason, correlation)
-        print(f"[kc_agent] wait scene: {scene}, targets={required_targets}, wait_id={wait_id}")
+        logger.info("wait scene: %s, targets=%s, wait_id=%s", scene, required_targets, wait_id)
         await self.scene_wait_q.put(spec)
 
     async def command_click(self, target: str, reason: str, trigger_event_id: Optional[str], wait_id: Optional[str], requires_scene: Optional[str], safety: Optional[dict[str, Any]] = None) -> None:
         cmd_id = new_id("cmd")
         self.ctx.pending_command_id = cmd_id
         cmd = Command(cmd_id, "click_target", target, reason, trigger_event_id, wait_id, requires_scene, safety or {}, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
-        print(f"[kc_agent] command: click {target}, reason={reason}, cmd_id={cmd_id}")
+        logger.info("command: click %s, reason=%s, cmd_id=%s", target, reason, cmd_id)
         await self.command_q.put(cmd)
 
 
 async def stdin_json_event_producer(event_q: asyncio.Queue[AgentEvent]) -> None:
     loop = asyncio.get_running_loop()
-    print("[stdin_producer] paste one JSON event per line; Ctrl+C to stop")
+    logger.info("stdin_producer: paste one JSON event per line; Ctrl+C to stop")
     while True:
         line = await loop.run_in_executor(None, input)
         line = line.strip()
@@ -605,19 +631,26 @@ async def stdin_json_event_producer(event_q: asyncio.Queue[AgentEvent]) -> None:
             raw = json.loads(line)
             event = normalize_poi_raw_event(raw)
             if event is None:
-                print("[stdin_producer] ignored unsupported event")
+                logger.warning("stdin_producer: ignored unsupported event")
                 continue
             await event_q.put(event)
         except Exception as exc:
-            print(f"[stdin_producer][ERROR] {exc!r}")
+            logger.exception("stdin_producer error: %r", exc)
 
 
 async def scene_waiter_stub(scene_wait_q: asyncio.Queue[WaitSpec], event_q: asyncio.Queue[AgentEvent], auto_ready: bool = False) -> None:
-    print("[scene_waiter_stub] started")
+    logger.info("scene_waiter_stub started")
     while True:
         spec = await scene_wait_q.get()
         try:
-            print(f"[scene_waiter_stub] wait_id={spec.wait_id} scene={spec.expected_scene} targets={spec.required_targets} timeout={spec.timeout_ms}ms reason={spec.reason}")
+            logger.info(
+                "scene_waiter_stub: wait_id=%s scene=%s targets=%s timeout=%sms reason=%s",
+                spec.wait_id,
+                spec.expected_scene,
+                spec.required_targets,
+                spec.timeout_ms,
+                spec.reason,
+            )
             if auto_ready:
                 await asyncio.sleep(0.5)
                 await event_q.put(AgentEvent("scene_ready", {"wait_id": spec.wait_id, "scene": spec.expected_scene, "targets": {name: {"visible": True, "bbox": [0, 0, 100, 40], "confidence": 0.99} for name in spec.required_targets}}, source="scene_waiter_stub", correlation=spec.correlation))
@@ -626,11 +659,18 @@ async def scene_waiter_stub(scene_wait_q: asyncio.Queue[WaitSpec], event_q: asyn
 
 
 async def mouse_executor_stub(command_q: asyncio.Queue[Command], event_q: asyncio.Queue[AgentEvent], auto_execute: bool = False) -> None:
-    print("[mouse_executor_stub] started")
+    logger.info("mouse_executor_stub started")
     while True:
         cmd = await command_q.get()
         try:
-            print(f"[mouse_executor_stub] command_id={cmd.command_id} command={cmd.command} target={cmd.target} reason={cmd.reason} safety={cmd.safety}")
+            logger.info(
+                "mouse_executor_stub: command_id=%s command=%s target=%s reason=%s safety=%s",
+                cmd.command_id,
+                cmd.command,
+                cmd.target,
+                cmd.reason,
+                cmd.safety,
+            )
             if auto_execute:
                 await asyncio.sleep(0.2)
                 await event_q.put(AgentEvent("action_result", {"command_id": cmd.command_id, "status": "executed", "target": cmd.target}, source="mouse_executor_stub", correlation=cmd.correlation))
@@ -671,7 +711,7 @@ def main() -> int:
     try:
         asyncio.run(async_main(args))
     except KeyboardInterrupt:
-        print("\n[kc_agent] stopped")
+        logger.info("stopped")
     return 0
 
 

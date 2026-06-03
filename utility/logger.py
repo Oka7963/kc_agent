@@ -1,6 +1,7 @@
 import logging
 from datetime import datetime
 import os
+import re
 
 def setup_logger(name: str = "kc_agent", log_level: int = logging.INFO) -> logging.Logger:
     """Set up a logger with both console and file handlers.
@@ -34,11 +35,17 @@ def setup_logger(name: str = "kc_agent", log_level: int = logging.INFO) -> loggi
     logger.addHandler(console_handler)
 
     # File handler
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file = os.path.join(log_dir, f"kc_agent_{timestamp}.log")
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    try:
+        log_dir = "logs"
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "logger"
+        log_file = os.path.join(log_dir, f"{safe_name}_{timestamp}.log")
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    except OSError:
+        pass
 
     return logger
 

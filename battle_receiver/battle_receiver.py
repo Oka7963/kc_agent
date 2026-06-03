@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -28,8 +29,16 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Optional
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from utility.logger import setup_logger
+
 
 JsonDict = dict[str, Any]
+
+logger = setup_logger(name="battle_receiver")
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -545,46 +554,59 @@ def make_handler(config: ReceiverConfig):
 
 
 def print_plugin_loaded(payload: JsonDict) -> None:
-    print()
-    print("=" * 100)
-    print(f"[{now_str()}] POI PLUGIN CONNECTION CONFIRMED")
-    print(f"plugin={payload.get('plugin')}")
-    print(f"message={payload.get('message')}")
-    print("=" * 100)
+    logger.info(
+        "\n%s\n[%s] POI PLUGIN CONNECTION CONFIRMED\nplugin=%s\nmessage=%s\n%s",
+        "=" * 100,
+        now_str(),
+        payload.get("plugin"),
+        payload.get("message"),
+        "=" * 100,
+    )
 
 
 def print_unsupported(raw_event: JsonDict) -> None:
-    print()
-    print("-" * 100)
-    print(f"[{now_str()}] unsupported raw event ignored")
-    print(f"seq={raw_event.get('seq')} event={raw_event.get('event')} phase={raw_event.get('phase')}")
-    print(f"path={raw_event.get('path')}")
-    print("-" * 100)
+    logger.warning(
+        "\n%s\n[%s] unsupported raw event ignored\nseq=%s event=%s phase=%s\npath=%s\n%s",
+        "-" * 100,
+        now_str(),
+        raw_event.get("seq"),
+        raw_event.get("event"),
+        raw_event.get("phase"),
+        raw_event.get("path"),
+        "-" * 100,
+    )
 
 
 def print_received(raw_event: JsonDict, packet: JsonDict, config: ReceiverConfig) -> None:
-    print()
-    print("=" * 100)
-    print(f"[{now_str()}] normalized POI event")
-    print(
-        f"raw: seq={raw_event.get('seq')} event={raw_event.get('event')} "
-        f"phase={raw_event.get('phase')} path={raw_event.get('path')}"
-    )
-    print(
-        f"packet: type={packet.get('type')} event_id={packet.get('event_id')} "
-        f"source={packet.get('source')} ts_ms={packet.get('ts_ms')}"
-    )
-    print(f"raw_log={config.raw_log_path.resolve()}")
-    print(f"normalized_log={config.normalized_log_path.resolve()}")
+    lines = [
+        "",
+        "=" * 100,
+        f"[{now_str()}] normalized POI event",
+        (
+            f"raw: seq={raw_event.get('seq')} event={raw_event.get('event')} "
+            f"phase={raw_event.get('phase')} path={raw_event.get('path')}"
+        ),
+        (
+            f"packet: type={packet.get('type')} event_id={packet.get('event_id')} "
+            f"source={packet.get('source')} ts_ms={packet.get('ts_ms')}"
+        ),
+        f"raw_log={config.raw_log_path.resolve()}",
+        f"normalized_log={config.normalized_log_path.resolve()}",
+    ]
 
     if config.print_raw:
-        print("-" * 100)
-        print(json.dumps(raw_event, ensure_ascii=False, indent=2))
+        lines.extend([
+            "-" * 100,
+            json.dumps(raw_event, ensure_ascii=False, indent=2),
+        ])
     if config.print_normalized:
-        print("-" * 100)
-        print(json.dumps(packet, ensure_ascii=False, indent=2))
+        lines.extend([
+            "-" * 100,
+            json.dumps(packet, ensure_ascii=False, indent=2),
+        ])
 
-    print("=" * 100)
+    lines.append("=" * 100)
+    logger.info("\n".join(lines))
 
 
 def parse_args() -> argparse.Namespace:
@@ -613,18 +635,18 @@ def main() -> int:
         print_normalized=not args.quiet_normalized,
     )
 
-    print(f"Listening on http://{args.host}:{args.port}/poi-event")
-    print(f"Plugin load confirmation: http://{args.host}:{args.port}/poi-plugin-loaded")
-    print(f"Health check: http://{args.host}:{args.port}/health")
-    print(f"Raw log: {config.raw_log_path.resolve()}")
-    print(f"Normalized log: {config.normalized_log_path.resolve()}")
-    print("Start poi and enable the event exporter plugin. Press Ctrl+C to stop.")
+    logger.info("Listening on http://%s:%s/poi-event", args.host, args.port)
+    logger.info("Plugin load confirmation: http://%s:%s/poi-plugin-loaded", args.host, args.port)
+    logger.info("Health check: http://%s:%s/health", args.host, args.port)
+    logger.info("Raw log: %s", config.raw_log_path.resolve())
+    logger.info("Normalized log: %s", config.normalized_log_path.resolve())
+    logger.info("Start poi and enable the event exporter plugin. Press Ctrl+C to stop.")
 
     server = HTTPServer((args.host, args.port), make_handler(config))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nStopping.")
+        logger.info("Stopping.")
         server.server_close()
         return 0
 
