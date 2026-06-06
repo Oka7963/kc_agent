@@ -22,15 +22,28 @@ import argparse
 import asyncio
 import enum
 import json
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from http.server import HTTPServer
+from pathlib import Path
+from queue import Empty, Queue
+from typing import Any, Callable, Optional
 
+from battle_receiver.battle_receiver import (
+    DEFAULT_HOST as DEFAULT_RECEIVER_HOST,
+    DEFAULT_NORMALIZED_LOG_PATH,
+    DEFAULT_PORT as DEFAULT_RECEIVER_PORT,
+    DEFAULT_RAW_LOG_PATH,
+    ReceiverConfig,
+    make_handler as make_battle_receiver_handler,
+)
 from utility.logger import setup_logger
 
 
 logger = setup_logger(name="kc_agent")
+ACTION_SCENE_CACHE_TTL_MS = 15000
 
 
 def now_ms() -> int:
@@ -48,6 +61,17 @@ def to_int(value: Any, default: Optional[int] = None) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def agent_event_from_packet(packet: dict[str, Any]) -> AgentEvent:
+    return AgentEvent(
+        type=packet["type"],
+        payload=packet.get("payload") or {},
+        event_id=packet.get("event_id", new_id("poi")),
+        ts_ms=to_int(packet.get("ts_ms"), now_ms()) or now_ms(),
+        source=packet.get("source", "poi"),
+        correlation=packet.get("correlation") or {},
+    )
 
 
 @dataclass
@@ -116,13 +140,22 @@ class RuntimeContext:
     current_route_no: Optional[int] = None
     current_node_type: str = "unknown"
     current_deck_id: Optional[int] = None
+    current_fleet: dict[str, Any] = field(default_factory=dict)
+    battle_progress: str = "-"
     taiha_latch: bool = False
     taiha_ships: list[dict[str, Any]] = field(default_factory=list)
     pending_wait_id: Optional[str] = None
     pending_scene: Optional[str] = None
     pending_command_id: Optional[str] = None
+    pending_command_target: Optional[str] = None
+    pending_command_reason: Optional[str] = None
     last_event_id: Optional[str] = None
+    last_event_type: str = "-"
     last_battle_result: Optional[dict[str, Any]] = None
+    last_battle_result_event_id: Optional[str] = None
+    battle_result_confirm_clicked: bool = False
+    drop_check_clicked: bool = False
+    scene_ready_cache: dict[str, AgentEvent] = field(default_factory=dict)
     user_paused: bool = False
 
 
@@ -165,6 +198,10 @@ def analyze_damage_from_fleet(fleet: dict[str, Any]) -> dict[str, Any]:
         "taiha_ships": taiha,
         "chuuha_ships": chuuha,
     }
+
+
+def has_drop(drop: dict[str, Any]) -> bool:
+    return any(drop.get(key) for key in ("ship_id", "item", "event_item"))
 
 
 def classify_node(body: dict[str, Any]) -> tuple[str, bool, bool]:
@@ -298,6 +335,7 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
                 "event_id": to_int(body.get("api_event_id")),
                 "event_kind": to_int(body.get("api_event_kind")),
                 "node_type": node_type,
+                "node_type_string": node_type,
                 "is_battle_node": is_battle,
                 "is_boss_node": is_boss,
                 "boss_cell_no": to_int(body.get("api_bosscell_no")),
@@ -383,6 +421,11 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
                 ship.update(hp_by_iid[iid])
         damage = analyze_damage_from_fleet(fleet)
         required_targets = ["retreat_button"] if damage["has_taiha"] else ["advance_button", "retreat_button"]
+        drop = {"ship_id": result.get("drop_ship_id") or result.get("dropShipId"), "item": result.get("drop_item") or result.get("dropItem"), "event_item": result.get("event_item") or result.get("eventItem")}
+        next_scenes = [{"scene": "battle_result_confirm", "required_targets": ["result_confirm_button"], "timeout_ms": 8000}]
+        if has_drop(drop):
+            next_scenes.append({"scene": "drop_check", "required_targets": ["drop_confirm_button"], "timeout_ms": 10000})
+        next_scenes.append({"scene": "advance_or_retreat", "required_targets": required_targets, "timeout_ms": 10000})
         payload = {
             "schema": "kc.agent.battle_event.v1",
             "event_type": "battle_result",
@@ -390,11 +433,11 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
             "seq": seq,
             "source_event": raw.get("source"),
             "path": path,
-            "battle": {"rank": result.get("rank"), "boss": result.get("boss"), "map": result.get("map"), "map_cell": result.get("map_cell") or result.get("mapCell"), "enemy_name": result.get("enemy"), "mvp": result.get("mvp") or [], "drop": {"ship_id": result.get("drop_ship_id") or result.get("dropShipId"), "item": result.get("drop_item") or result.get("dropItem"), "event_item": result.get("event_item") or result.get("eventItem")}},
+            "battle": {"rank": result.get("rank"), "boss": result.get("boss"), "map": result.get("map"), "map_cell": result.get("map_cell") or result.get("mapCell"), "enemy_name": result.get("enemy"), "mvp": result.get("mvp") or [], "drop": drop},
             "fleet": fleet,
             "damage": damage,
             "sortie": raw.get("sortie_snapshot") or {},
-            "expected": {"user_input_expected": True, "ui_wait_reason": "battle_result_confirm_then_advance_or_retreat", "next_scenes": [{"scene": "battle_result_confirm", "required_targets": ["result_confirm_button"], "timeout_ms": 8000}, {"scene": "advance_or_retreat", "required_targets": required_targets, "timeout_ms": 10000}]},
+            "expected": {"user_input_expected": True, "ui_wait_reason": "battle_result_confirm_then_drop_check_then_advance_or_retreat" if has_drop(drop) else "battle_result_confirm_then_advance_or_retreat", "next_scenes": next_scenes},
         }
         return AgentEvent("battle_result", payload, new_id("poi"), ts_ms, "poi")
 
@@ -402,14 +445,22 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
 
 
 class KcAgent:
-    def __init__(self, event_q: asyncio.Queue[AgentEvent], scene_wait_q: asyncio.Queue[WaitSpec], command_q: asyncio.Queue[Command]) -> None:
+    def __init__(
+        self,
+        event_q: asyncio.Queue[AgentEvent],
+        scene_wait_q: asyncio.Queue[WaitSpec],
+        command_q: asyncio.Queue[Command],
+        status_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> None:
         self.event_q = event_q
         self.scene_wait_q = scene_wait_q
         self.command_q = command_q
         self.ctx = RuntimeContext()
+        self.status_sink = status_sink
 
     async def run(self) -> None:
         logger.info("main loop started")
+        self.publish_status()
         while True:
             event = await self.event_q.get()
             try:
@@ -418,10 +469,15 @@ class KcAgent:
                 self.ctx.state = AgentState.ERROR
                 logger.exception("exception while handling %s: %r", event.type, exc)
             finally:
+                self.publish_status()
                 self.event_q.task_done()
 
     async def handle_event(self, event: AgentEvent) -> None:
         self.ctx.last_event_id = event.event_id
+        self.ctx.last_event_type = event.type
+        fleet = (event.payload or {}).get("fleet") or {}
+        if fleet:
+            self.ctx.current_fleet = fleet
         if self.ctx.user_paused and event.type != "user_interrupt":
             logger.info("paused; ignoring event=%s", event.type)
             return
@@ -431,6 +487,8 @@ class KcAgent:
             "map_node_arrived": self.on_map_node_arrived,
             "formation_selected": self.on_formation_selected,
             "day_battle_received": self.on_day_battle_received,
+            "night_battle_received": self.on_night_battle_received,
+            "fleet_state_updated": self.on_fleet_state_updated,
             "battle_result": self.on_battle_result,
             "scene_ready": self.on_scene_ready,
             "scene_timeout": self.on_scene_timeout,
@@ -443,6 +501,34 @@ class KcAgent:
             return
         await handler(event)
 
+    def build_status_snapshot(self) -> dict[str, Any]:
+        return {
+            "state": self.ctx.state.value,
+            "world": self.ctx.current_world or "-",
+            "route_no": self.ctx.current_route_no,
+            "node_type": self.ctx.current_node_type,
+            "deck_id": self.ctx.current_deck_id,
+            "fleet": self.ctx.current_fleet,
+            "last_event_type": self.ctx.last_event_type,
+            "last_event_id": self.ctx.last_event_id,
+            "battle_progress": self.ctx.battle_progress,
+            "pending_scene": self.ctx.pending_scene or "-",
+            "pending_wait_id": self.ctx.pending_wait_id,
+            "pending_command_target": self.ctx.pending_command_target or "-",
+            "pending_command_reason": self.ctx.pending_command_reason or "-",
+            "taiha_latch": self.ctx.taiha_latch,
+            "taiha_ships": self.ctx.taiha_ships,
+            "updated_at_ms": now_ms(),
+        }
+
+    def publish_status(self) -> None:
+        if self.status_sink is None:
+            return
+        try:
+            self.status_sink(self.build_status_snapshot())
+        except Exception as exc:
+            logger.warning("failed to publish GUI status: %r", exc)
+
     async def on_sortie_start_requested(self, event: AgentEvent) -> None:
         map_info = event.payload.get("map") or {}
         fleet = event.payload.get("fleet") or {}
@@ -451,8 +537,20 @@ class KcAgent:
         self.ctx.map_node_id = None
         self.ctx.current_world = map_info.get("world")
         self.ctx.current_deck_id = to_int(fleet.get("deck_id"), 1)
+        self.ctx.current_fleet = fleet
+        self.ctx.battle_progress = "-"
         self.ctx.taiha_latch = False
         self.ctx.taiha_ships.clear()
+        self.ctx.pending_wait_id = None
+        self.ctx.pending_scene = None
+        self.ctx.pending_command_id = None
+        self.ctx.pending_command_target = None
+        self.ctx.pending_command_reason = None
+        self.ctx.last_battle_result = None
+        self.ctx.last_battle_result_event_id = None
+        self.ctx.battle_result_confirm_clicked = False
+        self.ctx.drop_check_clicked = False
+        self.ctx.scene_ready_cache.clear()
         self.ctx.state = AgentState.SORTIE_STARTING
         logger.info(
             "sortie requested: sortie_id=%s world=%s deck=%s",
@@ -468,6 +566,8 @@ class KcAgent:
         self.ctx.current_world = map_info.get("world") or self.ctx.current_world
         self.ctx.current_route_no = to_int(map_info.get("route_no"))
         self.ctx.current_node_type = map_info.get("node_type", "unknown")
+        self.ctx.current_fleet = event.payload.get("fleet") or self.ctx.current_fleet
+        self.ctx.battle_progress = "-"
         self.ctx.map_node_id = f"{self.ctx.current_world}-route-{self.ctx.current_route_no}"
         self.ctx.state = AgentState.MAP_NODE_ARRIVED
         logger.info(
@@ -486,6 +586,8 @@ class KcAgent:
 
     async def on_formation_selected(self, event: AgentEvent) -> None:
         self.ctx.battle_id = new_id("battle")
+        self.clear_action_scene_cache()
+        self.ctx.battle_progress = "day_battle_starting"
         self.ctx.state = AgentState.IN_DAY_BATTLE
         formation = ((event.payload.get("battle") or {}).get("formation") or {}).get("requested")
         logger.info("formation selected: formation=%s battle_id=%s", formation, self.ctx.battle_id)
@@ -494,14 +596,27 @@ class KcAgent:
         battle = event.payload.get("battle") or {}
         expected = event.payload.get("expected") or {}
         can_night = battle.get("can_night_battle")
+        self.clear_action_scene_cache()
+        self.ctx.battle_progress = "day"
         logger.info("day battle received: formation=%s can_night=%s", battle.get("formation"), can_night)
         if can_night:
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
+            self.ctx.battle_progress = "wait_night_choice"
             scene = (expected.get("next_scenes") or [{}])[0]
             await self.request_scene_wait(scene.get("scene", "night_battle_choice"), scene.get("required_targets", ["night_battle_button", "no_night_battle_button"]), scene.get("timeout_ms", 10000), "can_night_battle", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
         else:
             self.ctx.state = AgentState.WAIT_BATTLE_RESULT
             logger.info("no night choice expected; wait for battle_result")
+
+    async def on_night_battle_received(self, event: AgentEvent) -> None:
+        self.ctx.current_fleet = event.payload.get("fleet") or self.ctx.current_fleet
+        self.ctx.battle_progress = "night"
+        self.ctx.state = AgentState.IN_NIGHT_BATTLE
+        logger.info("night battle received")
+
+    async def on_fleet_state_updated(self, event: AgentEvent) -> None:
+        self.ctx.current_fleet = event.payload.get("fleet") or self.ctx.current_fleet
+        logger.info("fleet state updated: ships=%s", self.ctx.current_fleet.get("ship_count"))
 
     async def on_battle_result(self, event: AgentEvent) -> None:
         payload = event.payload
@@ -509,6 +624,11 @@ class KcAgent:
         battle = payload.get("battle") or {}
         expected = payload.get("expected") or {}
         self.ctx.last_battle_result = payload
+        self.ctx.last_battle_result_event_id = event.event_id
+        self.ctx.battle_result_confirm_clicked = False
+        self.ctx.drop_check_clicked = False
+        self.ctx.current_fleet = payload.get("fleet") or self.ctx.current_fleet
+        self.ctx.battle_progress = "battle_result"
         self.ctx.taiha_latch = bool(damage.get("has_taiha"))
         self.ctx.taiha_ships = damage.get("taiha_ships") or []
         self.ctx.state = AgentState.RETREAT_REQUIRED if self.ctx.taiha_latch else AgentState.WAIT_RESULT_CONFIRM
@@ -523,44 +643,185 @@ class KcAgent:
         scenes = expected.get("next_scenes") or []
         if scenes:
             first = scenes[0]
-            await self.request_scene_wait(first.get("scene", "battle_result_confirm"), first.get("required_targets", ["result_confirm_button"]), first.get("timeout_ms", 8000), "battle_result_received", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "next_scenes": scenes, "next_scene_index": 0})
+            scene_name = first.get("scene", "battle_result_confirm")
+            # wait here for scene
+            await self.request_scene_wait(scene_name, first.get("required_targets", ["result_confirm_button"]), first.get("timeout_ms", 8000), "battle_result_received", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "battle_event_id": event.event_id, "next_scenes": scenes, "next_scene_index": 0})
+            cached_scene = self.ctx.scene_ready_cache.get(scene_name)
+            if cached_scene is not None and self.is_fresh_scene(cached_scene, event.ts_ms):
+                # wait here for click
+                await self.try_click_battle_result_confirm(cached_scene)
 
     async def on_scene_ready(self, event: AgentEvent) -> None:
         p = event.payload
         scene = p.get("scene")
         wait_id = p.get("wait_id")
-        corr = event.correlation or p.get("correlation") or {}
         logger.info("scene_ready: scene=%s wait_id=%s", scene, wait_id)
-        if wait_id != self.ctx.pending_wait_id:
+        if not scene:
+            logger.warning("scene_ready ignored: missing scene payload=%s", p)
+            return
+        self.ctx.scene_ready_cache[scene] = event
+        if wait_id and self.ctx.pending_wait_id and wait_id != self.ctx.pending_wait_id:
             logger.warning("stale scene_ready ignored: %s != %s", wait_id, self.ctx.pending_wait_id)
             return
-        self.ctx.pending_wait_id = None
-        self.ctx.pending_scene = None
-        scenes = corr.get("next_scenes") or []
-        idx = to_int(corr.get("next_scene_index"), 0) or 0
-        if idx + 1 < len(scenes):
-            nxt = scenes[idx + 1]
-            await self.request_scene_wait(nxt["scene"], nxt.get("required_targets", []), nxt.get("timeout_ms", 8000), f"next_scene_after_{scene}", event.event_id, {**corr, "next_scene_index": idx + 1})
-            self.ctx.state = AgentState.WAIT_FORMATION if nxt["scene"] == "formation_select" else AgentState.WAIT_ADVANCE_OR_RETREAT if nxt["scene"] == "advance_or_retreat" else self.ctx.state
-            return
+        if wait_id and wait_id == self.ctx.pending_wait_id:
+            self.ctx.pending_wait_id = None
+            self.ctx.pending_scene = None
         if scene == "battle_result_confirm":
-            await self.command_click("result_confirm_button", "confirm_battle_result", event.event_id, wait_id, scene)
-            self.ctx.state = AgentState.WAIT_ACTION_RESULT
+            await self.try_click_battle_result_confirm(event)
+        elif scene == "drop_check":
+            await self.try_click_drop_check(event)
         elif scene == "advance_or_retreat":
-            if self.ctx.taiha_latch:
-                await self.command_click("retreat_button", "taiha_detected", event.event_id, wait_id, scene, {"taiha_latch": True, "forbid_target": "advance_button"})
-                self.ctx.state = AgentState.WAIT_ACTION_RESULT
-            else:
-                self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
-                logger.info("user input required: choose advance or retreat")
+            await self.try_click_advance_or_retreat(event)
         elif scene == "formation_select":
             self.ctx.state = AgentState.WAIT_FORMATION
             logger.info("user input required: select formation")
         elif scene == "night_battle_choice":
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
+            self.ctx.battle_progress = "wait_night_choice"
             logger.info("user input required: choose night battle or no night battle")
         else:
             logger.warning("scene ready but no action defined: %s", scene)
+
+    def scene_target_visible(self, event: AgentEvent, target: str) -> bool:
+        targets = (event.payload or {}).get("targets") or {}
+        target_info = targets.get(target)
+        if not isinstance(target_info, dict):
+            return False
+        return bool(target_info.get("visible", True))
+
+    def is_fresh_scene(self, event: AgentEvent, reference_ts_ms: Optional[int] = None) -> bool:
+        reference = reference_ts_ms or now_ms()
+        return abs(reference - event.ts_ms) <= ACTION_SCENE_CACHE_TTL_MS
+
+    def clear_action_scene_cache(self) -> None:
+        for scene in ("battle_result_confirm", "drop_check", "advance_or_retreat"):
+            self.ctx.scene_ready_cache.pop(scene, None)
+
+    def next_battle_result_scene_after(self, scene_name: str) -> Optional[dict[str, Any]]:
+        scenes = ((self.ctx.last_battle_result or {}).get("expected") or {}).get("next_scenes") or []
+        for idx, scene in enumerate(scenes):
+            if scene.get("scene") == scene_name and idx + 1 < len(scenes):
+                return scenes[idx + 1]
+        return None
+
+    async def request_next_battle_result_scene(self, after_scene: str, trigger_event_id: Optional[str]) -> bool:
+        next_scene = self.next_battle_result_scene_after(after_scene)
+        if not next_scene:
+            return False
+        scene_name = next_scene.get("scene")
+        if not scene_name:
+            return False
+        await self.request_scene_wait(
+            scene_name,
+            next_scene.get("required_targets", []),
+            next_scene.get("timeout_ms", 8000),
+            f"after_{after_scene}",
+            trigger_event_id,
+            {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "battle_event_id": self.ctx.last_battle_result_event_id},
+        )
+        if scene_name == "advance_or_retreat":
+            self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
+        cached_scene = self.ctx.scene_ready_cache.get(scene_name)
+        if cached_scene is not None and self.is_fresh_scene(cached_scene):
+            if scene_name == "drop_check":
+                await self.try_click_drop_check(cached_scene)
+            elif scene_name == "advance_or_retreat":
+                await self.try_click_advance_or_retreat(cached_scene)
+        return True
+
+    async def try_click_battle_result_confirm(self, scene_event: AgentEvent) -> None:
+        scene = (scene_event.payload or {}).get("scene")
+        wait_id = (scene_event.payload or {}).get("wait_id")
+        if scene != "battle_result_confirm":
+            return
+        if not self.is_fresh_scene(scene_event):
+            logger.info("battle_result_confirm scene ignored because cached scene is too old")
+            return
+        if self.ctx.last_battle_result is None:
+            logger.info("battle_result_confirm scene ready, but no battle_result event has been accepted yet")
+            return
+        if self.ctx.battle_result_confirm_clicked or self.ctx.pending_command_id:
+            logger.info("battle_result_confirm click already pending/executed")
+            return
+        if not self.scene_target_visible(scene_event, "result_confirm_button"):
+            logger.info("battle_result_confirm scene ready, but result_confirm_button is not visible")
+            return
+        await self.command_click(
+            "result_confirm_button",
+            "confirm_battle_result",
+            self.ctx.last_battle_result_event_id,
+            wait_id,
+            scene,
+            {"requires_battle_event": "battle_result", "requires_scene_target": "result_confirm_button"},
+        )
+        self.ctx.scene_ready_cache.pop("battle_result_confirm", None)
+        self.ctx.battle_result_confirm_clicked = True
+        self.ctx.state = AgentState.WAIT_ACTION_RESULT
+
+    async def try_click_drop_check(self, scene_event: AgentEvent) -> None:
+        scene = (scene_event.payload or {}).get("scene")
+        wait_id = (scene_event.payload or {}).get("wait_id")
+        if scene != "drop_check":
+            return
+        if not self.is_fresh_scene(scene_event):
+            logger.info("drop_check scene ignored because cached scene is too old")
+            return
+        if self.ctx.last_battle_result is None:
+            logger.info("drop_check scene ready, but no battle_result event has been accepted yet")
+            return
+        drop = ((self.ctx.last_battle_result.get("battle") or {}).get("drop") or {})
+        if not has_drop(drop):
+            logger.info("drop_check scene ready, but last battle_result has no drop")
+            return
+        if self.ctx.drop_check_clicked or self.ctx.pending_command_id:
+            logger.info("drop_check click already pending/executed")
+            return
+        if not self.scene_target_visible(scene_event, "drop_confirm_button"):
+            logger.info("drop_check scene ready, but drop_confirm_button is not visible")
+            return
+        await self.command_click(
+            "drop_confirm_button",
+            "confirm_drop",
+            self.ctx.last_battle_result_event_id,
+            wait_id,
+            scene,
+            {"requires_battle_event": "battle_result", "requires_scene_target": "drop_confirm_button", "drop": drop},
+        )
+        self.ctx.scene_ready_cache.pop("drop_check", None)
+        self.ctx.drop_check_clicked = True
+        self.ctx.state = AgentState.WAIT_ACTION_RESULT
+
+    async def try_click_advance_or_retreat(self, scene_event: AgentEvent) -> None:
+        scene = (scene_event.payload or {}).get("scene")
+        wait_id = (scene_event.payload or {}).get("wait_id")
+        if scene != "advance_or_retreat":
+            return
+        if not self.is_fresh_scene(scene_event):
+            logger.info("advance_or_retreat scene ignored because cached scene is too old")
+            return
+        if self.ctx.last_battle_result is None:
+            logger.info("advance_or_retreat scene ready, but no battle_result event has been accepted yet")
+            return
+        if self.ctx.taiha_latch:
+            if self.ctx.pending_command_id:
+                logger.info("retreat click already pending")
+                return
+            if not self.scene_target_visible(scene_event, "retreat_button"):
+                logger.info("advance_or_retreat scene ready, but retreat_button is not visible")
+                return
+            await self.command_click(
+                "retreat_button",
+                "taiha_detected",
+                self.ctx.last_battle_result_event_id,
+                wait_id,
+                scene,
+                {"taiha_latch": True, "forbid_target": "advance_button", "requires_battle_event": "battle_result", "requires_scene_target": "retreat_button"},
+            )
+            self.ctx.scene_ready_cache.pop("advance_or_retreat", None)
+            self.ctx.state = AgentState.WAIT_ACTION_RESULT
+        else:
+            self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
+            logger.info("user input required: choose advance or retreat")
 
     async def on_scene_timeout(self, event: AgentEvent) -> None:
         logger.error("scene timeout: %s", event.payload)
@@ -578,14 +839,16 @@ class KcAgent:
         if cmd_id != self.ctx.pending_command_id:
             logger.warning("stale action_result ignored: %s != %s", cmd_id, self.ctx.pending_command_id)
             return
+        command_target = self.ctx.pending_command_target
         self.ctx.pending_command_id = None
+        self.ctx.pending_command_target = None
+        self.ctx.pending_command_reason = None
         if p.get("status") == "executed":
-            if self.ctx.last_battle_result:
-                scenes = (self.ctx.last_battle_result.get("expected") or {}).get("next_scenes") or []
-                advance_scene = next((s for s in scenes if s.get("scene") == "advance_or_retreat"), None)
-                if advance_scene:
-                    await self.request_scene_wait("advance_or_retreat", advance_scene.get("required_targets", ["advance_button", "retreat_button"]), advance_scene.get("timeout_ms", 10000), "after_result_confirm", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
-                    self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
+            if command_target == "result_confirm_button" and self.ctx.last_battle_result:
+                if await self.request_next_battle_result_scene("battle_result_confirm", event.event_id):
+                    return
+            if command_target == "drop_confirm_button" and self.ctx.last_battle_result:
+                if await self.request_next_battle_result_scene("drop_check", event.event_id):
                     return
             logger.info("action executed; waiting for POI confirmation")
         elif p.get("status") in ("rejected", "failed"):
@@ -610,13 +873,17 @@ class KcAgent:
         spec = WaitSpec(wait_id, scene, required_targets, trigger_event_id, timeout_ms, 2, reason, correlation)
         logger.info("wait scene: %s, targets=%s, wait_id=%s", scene, required_targets, wait_id)
         await self.scene_wait_q.put(spec)
+        self.publish_status()
 
     async def command_click(self, target: str, reason: str, trigger_event_id: Optional[str], wait_id: Optional[str], requires_scene: Optional[str], safety: Optional[dict[str, Any]] = None) -> None:
         cmd_id = new_id("cmd")
         self.ctx.pending_command_id = cmd_id
+        self.ctx.pending_command_target = target
+        self.ctx.pending_command_reason = reason
         cmd = Command(cmd_id, "click_target", target, reason, trigger_event_id, wait_id, requires_scene, safety or {}, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
         logger.info("command: click %s, reason=%s, cmd_id=%s", target, reason, cmd_id)
         await self.command_q.put(cmd)
+        self.publish_status()
 
 
 async def stdin_json_event_producer(event_q: asyncio.Queue[AgentEvent]) -> None:
@@ -678,11 +945,262 @@ async def mouse_executor_stub(command_q: asyncio.Queue[Command], event_q: asynci
             command_q.task_done()
 
 
-async def async_main(args: argparse.Namespace) -> None:
+def run_gui(args: argparse.Namespace) -> int:
+    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtGui import QImage, QPixmap
+    from PySide6.QtWidgets import (
+        QApplication,
+        QFrame,
+        QGridLayout,
+        QHeaderView,
+        QLabel,
+        QMainWindow,
+        QTableWidget,
+        QTableWidgetItem,
+        QVBoxLayout,
+        QWidget,
+    )
+
+    from key_identify.idc_find_feature import capture_window_by_title
+
+    status_q: Queue[dict[str, Any]] = Queue()
+
+    def status_sink(snapshot: dict[str, Any]) -> None:
+        status_q.put(snapshot)
+
+    def run_agent_thread() -> None:
+        try:
+            asyncio.run(async_main(args, status_sink=status_sink))
+        except Exception as exc:
+            status_q.put({
+                "state": "ERROR",
+                "last_event_type": "gui_agent_thread_error",
+                "pending_scene": "-",
+                "battle_progress": "-",
+                "world": "-",
+                "node_type": "-",
+                "fleet": {},
+                "error": repr(exc),
+                "updated_at_ms": now_ms(),
+            })
+
+    class AgentDashboard(QMainWindow):
+        def __init__(self) -> None:
+            super().__init__()
+            self.setWindowTitle("KC Agent Dashboard")
+            self.resize(1180, 820)
+            self.latest_snapshot: dict[str, Any] = {}
+
+            root = QWidget()
+            self.setCentralWidget(root)
+            root.setStyleSheet("background: #030712; color: #f9fafb;")
+            layout = QGridLayout(root)
+            layout.setContentsMargins(14, 14, 14, 14)
+            layout.setSpacing(12)
+
+            self.status_cards: dict[str, QLabel] = {}
+            cards = QGridLayout()
+            for idx, key in enumerate(("State", "Sea Area", "Event", "Battle", "Waiting Scene", "Command")):
+                frame = QFrame()
+                frame.setFrameShape(QFrame.StyledPanel)
+                frame.setStyleSheet("QFrame { border: 1px solid #374151; border-radius: 6px; background: #111827; } QLabel { border: 0; }")
+                box = QVBoxLayout(frame)
+                title = QLabel(key)
+                title.setStyleSheet("font-size: 12px; color: #d1d5db;")
+                value = QLabel("-")
+                value.setStyleSheet("font-size: 19px; font-weight: 700; color: #f9fafb;")
+                value.setWordWrap(True)
+                box.addWidget(title)
+                box.addWidget(value)
+                self.status_cards[key] = value
+                cards.addWidget(frame, idx // 3, idx % 3)
+            layout.addLayout(cards, 0, 0)
+
+            fleet_panel = QFrame()
+            fleet_panel.setFrameShape(QFrame.StyledPanel)
+            fleet_panel.setStyleSheet("QFrame { border: 1px solid #374151; border-radius: 6px; background: #111827; } QLabel, QTableWidget { border: 0; color: #f9fafb; }")
+            fleet_layout = QVBoxLayout(fleet_panel)
+            fleet_title = QLabel("Fleet HP")
+            fleet_title.setStyleSheet("font-size: 14px; font-weight: 700; color: #f9fafb;")
+            self.fleet_table = QTableWidget(0, 6)
+            self.fleet_table.setStyleSheet(
+                "QTableWidget { background: #030712; color: #f9fafb; gridline-color: #374151; alternate-background-color: #111827; }"
+                "QHeaderView::section { background: #1f2937; color: #f9fafb; border: 1px solid #374151; padding: 4px; }"
+                "QTableWidget::item:selected { background: #2563eb; color: #ffffff; }"
+            )
+            self.fleet_table.setHorizontalHeaderLabels(["Pos", "Ship ID", "HP", "State", "Cond", "Fuel/Bull"])
+            self.fleet_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            self.fleet_table.verticalHeader().setVisible(False)
+            self.fleet_table.setAlternatingRowColors(True)
+            fleet_layout.addWidget(fleet_title)
+            fleet_layout.addWidget(self.fleet_table)
+            layout.addWidget(fleet_panel, 1, 0)
+
+            screen_panel = QFrame()
+            screen_panel.setFrameShape(QFrame.StyledPanel)
+            screen_panel.setStyleSheet("QFrame { border: 1px solid #374151; border-radius: 6px; background: #111827; } QLabel { border: 0; color: #f9fafb; }")
+            screen_layout = QVBoxLayout(screen_panel)
+            self.screen_title = QLabel(f"POI Screen: {args.poi_window_title}")
+            self.screen_title.setStyleSheet("font-size: 14px; font-weight: 700;")
+            self.screen_label = QLabel("Waiting for screenshot...")
+            self.screen_label.setAlignment(Qt.AlignCenter)
+            self.screen_label.setMinimumSize(520, 360)
+            self.screen_label.setStyleSheet("background: #030712; color: #d1d5db;")
+            self.screen_status = QLabel("")
+            self.screen_status.setStyleSheet("font-size: 12px; color: #d1d5db;")
+            screen_layout.addWidget(self.screen_title)
+            screen_layout.addWidget(self.screen_label, 1)
+            screen_layout.addWidget(self.screen_status)
+            layout.addWidget(screen_panel, 0, 1, 2, 1)
+
+            self.detail = QLabel("")
+            self.detail.setStyleSheet("color: #f9fafb; background: #030712;")
+            layout.addWidget(self.detail, 2, 0, 1, 2)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 1)
+            layout.setRowStretch(1, 1)
+
+            self.status_timer = QTimer(self)
+            self.status_timer.timeout.connect(self.drain_status)
+            self.status_timer.start(args.gui_refresh_ms)
+
+            self.screenshot_timer = QTimer(self)
+            self.screenshot_timer.timeout.connect(self.refresh_screenshot)
+            self.screenshot_timer.start(args.screenshot_refresh_ms)
+
+        def drain_status(self) -> None:
+            changed = False
+            while True:
+                try:
+                    self.latest_snapshot = status_q.get_nowait()
+                    changed = True
+                except Empty:
+                    break
+            if changed:
+                self.render_status(self.latest_snapshot)
+
+        def render_status(self, snapshot: dict[str, Any]) -> None:
+            route_no = snapshot.get("route_no")
+            sea = snapshot.get("world") or "-"
+            if route_no is not None:
+                sea = f"{sea} / node {route_no}"
+            node_type = snapshot.get("node_type") or "-"
+            if node_type != "-":
+                sea = f"{sea} ({node_type})"
+
+            self.status_cards["State"].setText(str(snapshot.get("state") or "-"))
+            self.status_cards["Sea Area"].setText(sea)
+            self.status_cards["Event"].setText(str(snapshot.get("last_event_type") or "-"))
+            self.status_cards["Battle"].setText(str(snapshot.get("battle_progress") or "-"))
+            self.status_cards["Waiting Scene"].setText(str(snapshot.get("pending_scene") or "-"))
+            self.status_cards["Command"].setText(str(snapshot.get("pending_command_target") or "-"))
+
+            fleet = snapshot.get("fleet") or {}
+            ships = list(fleet.get("ships") or [])
+            self.fleet_table.setRowCount(len(ships))
+            for row, ship in enumerate(ships):
+                now_hp = to_int(ship.get("battle_end_hp"), to_int(ship.get("now_hp"), 0)) or 0
+                max_hp = to_int(ship.get("max_hp"), 0) or 0
+                values = [
+                    ship.get("pos") or ship.get("position") or row + 1,
+                    ship.get("ship_id", "-"),
+                    f"{now_hp}/{max_hp}",
+                    damage_state(now_hp, max_hp),
+                    ship.get("cond", "-"),
+                    f"{ship.get('fuel', '-')}/{ship.get('bullet', '-')}",
+                ]
+                for col, value in enumerate(values):
+                    item = QTableWidgetItem(str(value))
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    self.fleet_table.setItem(row, col, item)
+
+            taiha = snapshot.get("taiha_ships") or []
+            error = snapshot.get("error")
+            self.detail.setText(
+                f"wait_id={snapshot.get('pending_wait_id') or '-'}    "
+                f"event_id={snapshot.get('last_event_id') or '-'}    "
+                f"taiha={snapshot.get('taiha_latch')} {taiha}"
+                + (f"    error={error}" if error else "")
+            )
+
+        def refresh_screenshot(self) -> None:
+            try:
+                bgr, window = capture_window_by_title(args.poi_window_title)
+                rgb = bgr[:, :, ::-1].copy()
+                height, width, channels = rgb.shape
+                qimage = QImage(rgb.data, width, height, channels * width, QImage.Format_RGB888).copy()
+                pixmap = QPixmap.fromImage(qimage).scaled(
+                    self.screen_label.size(),
+                    Qt.KeepAspectRatio,
+                    Qt.SmoothTransformation,
+                )
+                self.screen_label.setPixmap(pixmap)
+                self.screen_status.setText(f"{window.title}  {width}x{height}")
+            except Exception as exc:
+                self.screen_label.setText("POI window not found or screenshot failed")
+                self.screen_status.setText(str(exc))
+
+    thread = threading.Thread(target=run_agent_thread, name="kc_agent_gui_loop", daemon=True)
+    thread.start()
+
+    app = QApplication([])
+    dashboard = AgentDashboard()
+    dashboard.show()
+    return app.exec()
+
+
+def start_battle_receiver(
+    args: argparse.Namespace,
+    loop: asyncio.AbstractEventLoop,
+    event_q: asyncio.Queue[AgentEvent],
+) -> tuple[HTTPServer, threading.Thread]:
+    def packet_sink(packet: dict[str, Any]) -> None:
+        def enqueue_packet() -> None:
+            try:
+                event_q.put_nowait(agent_event_from_packet(packet))
+            except asyncio.QueueFull:
+                logger.error("event queue full; dropped receiver packet type=%s", packet.get("type"))
+            except Exception as exc:
+                logger.exception("failed to enqueue receiver packet: %r", exc)
+
+        loop.call_soon_threadsafe(enqueue_packet)
+
+    config = ReceiverConfig(
+        raw_log_path=args.receiver_raw_log,
+        normalized_log_path=args.receiver_normalized_log,
+        print_raw=args.receiver_print_raw,
+        print_normalized=not args.receiver_quiet_normalized,
+        packet_sink=packet_sink,
+    )
+    server = HTTPServer(
+        (args.receiver_host, args.receiver_port),
+        make_battle_receiver_handler(config),
+    )
+    thread = threading.Thread(
+        target=server.serve_forever,
+        name="battle_receiver_http",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "battle_receiver started: http://%s:%s/poi-event",
+        args.receiver_host,
+        server.server_port,
+    )
+    return server, thread
+
+
+async def async_main(args: argparse.Namespace, status_sink: Optional[Callable[[dict[str, Any]], None]] = None) -> None:
     event_q: asyncio.Queue[AgentEvent] = asyncio.Queue(maxsize=args.event_queue_size)
     scene_wait_q: asyncio.Queue[WaitSpec] = asyncio.Queue(maxsize=args.scene_queue_size)
     command_q: asyncio.Queue[Command] = asyncio.Queue(maxsize=args.command_queue_size)
-    agent = KcAgent(event_q, scene_wait_q, command_q)
+    agent = KcAgent(event_q, scene_wait_q, command_q, status_sink=status_sink)
+    loop = asyncio.get_running_loop()
+    receiver_server: Optional[HTTPServer] = None
+    receiver_thread: Optional[threading.Thread] = None
+    if not args.no_battle_receiver:
+        # if we did not said we don't want battle receiver, start it
+        receiver_server, receiver_thread = start_battle_receiver(args, loop, event_q)
     tasks = [
         asyncio.create_task(agent.run(), name="kc_agent_main_loop"),
         asyncio.create_task(stdin_json_event_producer(event_q), name="stdin_json_event_producer"),
@@ -694,20 +1212,38 @@ async def async_main(args: argparse.Namespace) -> None:
     finally:
         for task in tasks:
             task.cancel()
+        if receiver_server is not None:
+            receiver_server.shutdown()
+            receiver_server.server_close()
+        if receiver_thread is not None:
+            receiver_thread.join(timeout=2)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="KC_AGENT main orchestrator")
+    parser.add_argument("--gui", action="store_true", help="Run KC Agent with a PySide6 dashboard.")
+    parser.add_argument("--poi-window-title", default="poi", help="Window title substring for POI screenshot capture.")
+    parser.add_argument("--gui-refresh-ms", type=int, default=250, help="Dashboard state refresh interval.")
+    parser.add_argument("--screenshot-refresh-ms", type=int, default=1000, help="POI screenshot refresh interval.")
     parser.add_argument("--event-queue-size", type=int, default=100)
     parser.add_argument("--scene-queue-size", type=int, default=20)
     parser.add_argument("--command-queue-size", type=int, default=20)
     parser.add_argument("--auto-scene-ready", action="store_true", help="Stub mode: scene waiter emits scene_ready automatically.")
     parser.add_argument("--auto-mouse-execute", action="store_true", help="Stub mode: mouse executor emits action_result automatically.")
+    parser.add_argument("--no-battle-receiver", action="store_true", help="Do not start the embedded POI battle receiver.")
+    parser.add_argument("--receiver-host", default=DEFAULT_RECEIVER_HOST)
+    parser.add_argument("--receiver-port", type=int, default=DEFAULT_RECEIVER_PORT)
+    parser.add_argument("--receiver-raw-log", type=Path, default=DEFAULT_RAW_LOG_PATH)
+    parser.add_argument("--receiver-normalized-log", type=Path, default=DEFAULT_NORMALIZED_LOG_PATH)
+    parser.add_argument("--receiver-print-raw", action="store_true")
+    parser.add_argument("--receiver-quiet-normalized", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.gui:
+        return run_gui(args)
     try:
         asyncio.run(async_main(args))
     except KeyboardInterrupt:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import ctypes
 import json
@@ -7,14 +9,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Tuple, Union
 
-import cv2
-import mss
-import numpy as np
-import win32gui
-import win32con
+_CAPTURE_IMPORT_ERROR: Optional[Exception] = None
+try:
+    import cv2
+    import mss
+    import numpy as np
+    import win32gui
+    import win32con
+except ModuleNotFoundError as exc:
+    cv2 = None
+    mss = None
+    np = None
+    win32gui = None
+    win32con = None
+    _CAPTURE_IMPORT_ERROR = exc
 
 
-from logger import setup_logger
+try:
+    from logger import setup_logger
+except ModuleNotFoundError:
+    from utility.logger import setup_logger
 
 logger = setup_logger("find_feature")
 
@@ -71,6 +85,7 @@ class FeatureMatcher:
             window_title: Substring to match in the window title (case-insensitive)
             template_path: Path to the template image file
         """
+        _ensure_capture_dependencies()
         self._set_dpi_aware()
         self.window = self._find_window_by_title(window_title)
         if not self.window:
@@ -91,6 +106,7 @@ class FeatureMatcher:
     @staticmethod
     def _find_window_by_title(title_substr: str) -> Optional[WindowInfo]:
         """Find a window by title substring."""
+        _ensure_capture_dependencies()
         title_substr = title_substr.lower()
         result = {"info": None}
 
@@ -115,6 +131,7 @@ class FeatureMatcher:
     @staticmethod
     def _load_template(path: Union[str, Path]) -> np.ndarray:
         """Load template image from file."""
+        _ensure_capture_dependencies()
         path = Path(path) if isinstance(path, str) else path
         if not path.exists():
             raise FileNotFoundError(f"Template file not found: {path}")
@@ -126,16 +143,7 @@ class FeatureMatcher:
 
     def capture_window(self) -> np.ndarray:
         """Capture the current window's client area."""
-        left, top, right, bottom = self.window.screen_rect
-        w = max(1, right - left)
-        h = max(1, bottom - top)
-
-        region = {"left": left, "top": top, "width": w, "height": h}
-        with mss.mss() as sct:
-            shot = sct.grab(region)  # BGRA
-            img = np.array(shot, dtype=np.uint8)
-
-        return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        return capture_window_info(self.window)
 
     def match_template_ORB(
         self,
@@ -393,6 +401,40 @@ class FeatureMatcher:
             cv2.waitKey(1)
 
         return vis
+
+
+def capture_window_info(window: WindowInfo) -> np.ndarray:
+    """Capture a WindowInfo client area and return a BGR image."""
+    _ensure_capture_dependencies()
+    left, top, right, bottom = window.screen_rect
+    w = max(1, right - left)
+    h = max(1, bottom - top)
+
+    region = {"left": left, "top": top, "width": w, "height": h}
+    with mss.mss() as sct:
+        shot = sct.grab(region)  # BGRA
+        img = np.array(shot, dtype=np.uint8)
+
+    return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+
+def capture_window_by_title(window_title: str) -> tuple[np.ndarray, WindowInfo]:
+    """Capture the client area of the first visible window matching title."""
+    _ensure_capture_dependencies()
+    FeatureMatcher._set_dpi_aware()
+    window = FeatureMatcher._find_window_by_title(window_title)
+    if window is None:
+        raise ValueError(f"Window with title containing '{window_title}' not found")
+    return capture_window_info(window), window
+
+
+def _ensure_capture_dependencies() -> None:
+    if _CAPTURE_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "Screenshot dependencies are missing. Install project dependencies "
+            "(mss, opencv-python, numpy, pywin32) before using capture_window_by_title()."
+        ) from _CAPTURE_IMPORT_ERROR
+
 
 if __name__ == "__main__":
     title = "kc_simulator"
