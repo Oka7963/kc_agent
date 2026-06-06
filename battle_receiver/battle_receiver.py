@@ -27,7 +27,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -68,10 +68,13 @@ def to_int(value: Any, default: Optional[int] = None) -> Optional[int]:
 
 
 def append_jsonl(path: Path, obj: JsonDict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
-        f.write("\n")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(obj, ensure_ascii=False, separators=(",", ":")))
+            f.write("\n")
+    except OSError as exc:
+        logger.warning("failed to append jsonl path=%s error=%r", path, exc)
 
 
 @dataclass
@@ -129,6 +132,38 @@ def analyze_damage_from_fleet(fleet: JsonDict) -> JsonDict:
     }
 
 
+def has_drop(drop: JsonDict) -> bool:
+    return any(drop.get(key) for key in ("ship_id", "item", "event_item"))
+
+
+@dataclass
+class FleetStateTracker:
+    fleets: list[JsonDict] = field(default_factory=list)
+    sortie: JsonDict = field(default_factory=dict)
+    updated_at_ms: int = field(default_factory=now_ms)
+
+    def update_from_raw(self, raw: JsonDict) -> None:
+        fleets = raw.get("fleet_snapshot")
+        if isinstance(fleets, list) and fleets:
+            self.fleets = fleets
+            self.updated_at_ms = to_int(raw.get("exported_at"), now_ms()) or now_ms()
+
+        sortie = raw.get("sortie_snapshot")
+        if isinstance(sortie, dict) and sortie:
+            self.sortie = sortie
+            self.updated_at_ms = to_int(raw.get("exported_at"), now_ms()) or now_ms()
+
+    def active_fleet(self, deck_id: int = 1) -> JsonDict:
+        return active_fleet_from_fleets(self.fleets, self.sortie, deck_id)
+
+    def snapshot(self) -> JsonDict:
+        return {
+            "fleets": self.fleets,
+            "sortie": self.sortie,
+            "updated_at_ms": self.updated_at_ms,
+        }
+
+
 def classify_node(body: JsonDict) -> tuple[str, bool, bool]:
     route_no = to_int(body.get("api_no"))
     color_no = to_int(body.get("api_color_no"))
@@ -163,8 +198,7 @@ def classify_node(body: JsonDict) -> tuple[str, bool, bool]:
     return "unknown", False, False
 
 
-def active_fleet_from_snapshot(raw: JsonDict, deck_id: int = 1) -> JsonDict:
-    fleets = raw.get("fleet_snapshot") or []
+def active_fleet_from_fleets(fleets: list[JsonDict], sortie: JsonDict, deck_id: int = 1) -> JsonDict:
     selected = next((f for f in fleets if to_int(f.get("deck_id")) == deck_id), None)
     if selected is None and fleets:
         selected = fleets[0]
@@ -183,9 +217,9 @@ def active_fleet_from_snapshot(raw: JsonDict, deck_id: int = 1) -> JsonDict:
             "cond": ship.get("cond"),
             "fuel": ship.get("fuel"),
             "bullet": ship.get("bullet"),
+            "slot": ship.get("slot") or [],
         })
 
-    sortie = raw.get("sortie_snapshot") or {}
     return {
         "deck_id": selected.get("deck_id", deck_id),
         "combined_flag": sortie.get("combined_flag"),
@@ -196,8 +230,15 @@ def active_fleet_from_snapshot(raw: JsonDict, deck_id: int = 1) -> JsonDict:
     }
 
 
-def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
+def active_fleet_from_snapshot(raw: JsonDict, deck_id: int = 1) -> JsonDict:
+    return active_fleet_from_fleets(raw.get("fleet_snapshot") or [], raw.get("sortie_snapshot") or {}, deck_id)
+
+
+def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTracker] = None) -> Optional[AgentEvent]:
     """Convert a raw POI exporter event into an AgentEvent packet."""
+    if fleet_state is not None:
+        fleet_state.update_from_raw(raw)
+
     if "event_type" in raw:
         return AgentEvent(
             type=raw["event_type"],
@@ -215,6 +256,29 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
     req = raw.get("request_body") or {}
     seq = raw.get("seq")
     ts_ms = to_int(raw.get("exported_at"), now_ms()) or now_ms()
+    active_fleet = fleet_state.active_fleet if fleet_state is not None else lambda deck_id=1: active_fleet_from_snapshot(raw, deck_id)
+    sortie_snapshot = fleet_state.sortie if fleet_state is not None else raw.get("sortie_snapshot") or {}
+
+    if name and name.startswith(("ship2_update_", "ship3_update_", "deck_update_")):
+        fleet = active_fleet(1)
+        return AgentEvent(
+            "fleet_state_updated",
+            {
+                "schema": "kc.agent.fleet_state.v1",
+                "event_type": "fleet_state_updated",
+                "phase": "fleet_update",
+                "seq": seq,
+                "source_event": raw.get("source"),
+                "path": path,
+                "fleet": fleet,
+                "fleets": fleet_state.fleets if fleet_state is not None else raw.get("fleet_snapshot") or [],
+                "sortie": sortie_snapshot,
+                "state_updated_at_ms": fleet_state.updated_at_ms if fleet_state is not None else ts_ms,
+            },
+            new_id("poi"),
+            ts_ms,
+            "poi",
+        )
 
     if name == "map_start_request" or (path == "/kcsapi/api_req_map/start" and phase == "request"):
         area = to_int(req.get("api_maparea_id"))
@@ -229,8 +293,8 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
             "source_event": raw.get("source"),
             "path": path,
             "map": {"area": area, "info_no": info_no, "world": world},
-            "fleet": active_fleet_from_snapshot(raw, deck_id),
-            "sortie": raw.get("sortie_snapshot") or {},
+            "fleet": active_fleet(deck_id),
+            "sortie": sortie_snapshot,
             "expected": {
                 "user_input_expected": False,
                 "ui_wait_reason": "waiting_map_start_response",
@@ -282,6 +346,7 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
                 "event_id": to_int(body.get("api_event_id")),
                 "event_kind": to_int(body.get("api_event_kind")),
                 "node_type": node_type,
+                "node_type_string": node_type,
                 "is_battle_node": is_battle,
                 "is_boss_node": is_boss,
                 "boss_cell_no": to_int(body.get("api_bosscell_no")),
@@ -289,8 +354,8 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
                 "rashin_flg": to_int(body.get("api_rashin_flg")),
                 "rashin_id": to_int(body.get("api_rashin_id")),
             },
-            "fleet": active_fleet_from_snapshot(raw, deck_id),
-            "sortie": raw.get("sortie_snapshot") or {},
+            "fleet": active_fleet(deck_id),
+            "sortie": sortie_snapshot,
             "expected": {
                 "user_input_expected": bool(next_scenes),
                 "ui_wait_reason": (
@@ -320,7 +385,7 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
                     "engagement": None,
                 },
             },
-            "fleet": active_fleet_from_snapshot(raw, 1),
+            "fleet": active_fleet(1),
             "expected": {
                 "user_input_expected": False,
                 "ui_wait_reason": "battle_started",
@@ -368,7 +433,7 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
                     "raigeki": bool(body.get("api_raigeki")),
                 },
             },
-            "fleet": active_fleet_from_snapshot(raw, 1),
+            "fleet": active_fleet(1),
             "enemy": {
                 "ship_ids": body.get("api_ship_ke") or [],
                 "start_hp": body.get("api_e_nowhps") or [],
@@ -384,7 +449,7 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
 
     if name == "battle_result" or raw.get("phase") == "poi_battle_result":
         result = raw.get("battle_result") or raw.get("result") or {}
-        fleet = active_fleet_from_snapshot(raw, 1)
+        fleet = active_fleet(1)
         deck_ship_ids = result.get("deck_ship_id") or result.get("deckShipId") or []
         deck_hp = result.get("deck_hp") or result.get("deckHp") or []
         deck_init_hp = result.get("deck_init_hp") or result.get("deckInitHp") or []
@@ -406,6 +471,29 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
 
         damage = analyze_damage_from_fleet(fleet)
         required_targets = ["retreat_button"] if damage["has_taiha"] else ["advance_button", "retreat_button"]
+        drop = {
+            "ship_id": result.get("drop_ship_id") or result.get("dropShipId"),
+            "item": result.get("drop_item") or result.get("dropItem"),
+            "event_item": result.get("event_item") or result.get("eventItem"),
+        }
+        next_scenes = [
+            {
+                "scene": "battle_result_confirm",
+                "required_targets": ["result_confirm_button"],
+                "timeout_ms": 8000,
+            },
+        ]
+        if has_drop(drop):
+            next_scenes.append({
+                "scene": "drop_check",
+                "required_targets": ["drop_confirm_button"],
+                "timeout_ms": 10000,
+            })
+        next_scenes.append({
+            "scene": "advance_or_retreat",
+            "required_targets": required_targets,
+            "timeout_ms": 10000,
+        })
         payload = {
             "schema": "kc.agent.battle_event.v1",
             "event_type": "battle_result",
@@ -420,30 +508,15 @@ def normalize_poi_raw_event(raw: JsonDict) -> Optional[AgentEvent]:
                 "map_cell": result.get("map_cell") or result.get("mapCell"),
                 "enemy_name": result.get("enemy"),
                 "mvp": result.get("mvp") or [],
-                "drop": {
-                    "ship_id": result.get("drop_ship_id") or result.get("dropShipId"),
-                    "item": result.get("drop_item") or result.get("dropItem"),
-                    "event_item": result.get("event_item") or result.get("eventItem"),
-                },
+                "drop": drop,
             },
             "fleet": fleet,
             "damage": damage,
-            "sortie": raw.get("sortie_snapshot") or {},
+            "sortie": sortie_snapshot,
             "expected": {
                 "user_input_expected": True,
-                "ui_wait_reason": "battle_result_confirm_then_advance_or_retreat",
-                "next_scenes": [
-                    {
-                        "scene": "battle_result_confirm",
-                        "required_targets": ["result_confirm_button"],
-                        "timeout_ms": 8000,
-                    },
-                    {
-                        "scene": "advance_or_retreat",
-                        "required_targets": required_targets,
-                        "timeout_ms": 10000,
-                    },
-                ],
+                "ui_wait_reason": "battle_result_confirm_then_drop_check_then_advance_or_retreat" if has_drop(drop) else "battle_result_confirm_then_advance_or_retreat",
+                "next_scenes": next_scenes,
             },
         }
         return AgentEvent("battle_result", payload, new_id("poi"), ts_ms, "poi")
@@ -457,9 +530,12 @@ class ReceiverConfig:
     normalized_log_path: Path
     print_raw: bool = False
     print_normalized: bool = True
+    packet_sink: Optional[Callable[[JsonDict], None]] = None
 
 
 def make_handler(config: ReceiverConfig):
+    fleet_state = FleetStateTracker()
+
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             if self.path not in {"/poi-event", "/poi-plugin-loaded"}:
@@ -476,7 +552,7 @@ def make_handler(config: ReceiverConfig):
                 return
 
             append_jsonl(config.raw_log_path, raw_event)
-            normalized = normalize_poi_raw_event(raw_event)
+            normalized = normalize_poi_raw_event(raw_event, fleet_state=fleet_state)
             if normalized is None:
                 print_unsupported(raw_event)
                 self.send_plain_response(202, b"ignored unsupported event")
@@ -485,6 +561,8 @@ def make_handler(config: ReceiverConfig):
             packet = normalized.to_packet()
             append_jsonl(config.normalized_log_path, packet)
             print_received(raw_event, packet, config)
+            if config.packet_sink is not None:
+                config.packet_sink(packet)
             self.send_json_response(200, packet)
 
         def do_OPTIONS(self) -> None:
