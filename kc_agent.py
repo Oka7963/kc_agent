@@ -22,12 +22,41 @@ import argparse
 import asyncio
 import enum
 import json
+import threading
 from dataclasses import dataclass, field
+from http.server import HTTPServer
 from pathlib import Path
-from typing import Any, Optional
+from queue import Empty, Queue
+from typing import Any, Callable, Optional
 
+from battle_receiver.battle_receiver import (
+    DEFAULT_HOST as DEFAULT_RECEIVER_HOST,
+    DEFAULT_NORMALIZED_LOG_PATH,
+    DEFAULT_PORT as DEFAULT_RECEIVER_PORT,
+    DEFAULT_RAW_LOG_PATH,
+    ReceiverConfig,
+    make_handler as make_battle_receiver_handler,
+)
+from kc_core.damage import damage_state
 from kc_core.decoder import normalize_poi_raw_event
-from kc_core.event_models import AgentEvent, Command, JsonDict, SceneObservation, WaitSpec, new_id, to_int
+from kc_core.event_models import AgentEvent, Command, JsonDict, SceneObservation, WaitSpec, new_id, now_ms, to_int
+from utility.logger import setup_logger
+
+
+logger = setup_logger(name="kc_agent")
+ACTION_SCENE_CACHE_TTL_MS = 15000
+DEFAULT_ACTION_POLICY_PATH = Path("utility/action_policy.json")
+
+
+def agent_event_from_packet(packet: dict[str, Any]) -> AgentEvent:
+    return AgentEvent(
+        type=packet["type"],
+        payload=packet.get("payload") or {},
+        event_id=packet.get("event_id", new_id("poi")),
+        ts_ms=to_int(packet.get("ts_ms"), now_ms()) or now_ms(),
+        source=packet.get("source", "poi"),
+        correlation=packet.get("correlation") or {},
+    )
 
 
 class AgentState(str, enum.Enum):
@@ -101,6 +130,50 @@ def load_agent_policy(config_path: str | Path = DEFAULT_AGENT_CONFIG) -> dict[st
         return json.load(f)
 
 
+def load_action_policy(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        logger.warning("action policy not found: %s", path)
+        return {}
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def target_visible(scene: dict[str, Any], target: str) -> bool:
+    targets = scene.get("targets") or {}
+    info = targets.get(target)
+    return isinstance(info, dict) and bool(info.get("visible", True))
+
+
+class MainDecisionStateMachine:
+    def __init__(self, action_policy: dict[str, Any]) -> None:
+        self.action_policy = action_policy
+
+    def action_to_target(self, action: str) -> Optional[str]:
+        return (self.action_policy.get("button_targets") or {}).get(action)
+
+    def decide(self, ctx: RuntimeContext) -> tuple[Optional[str], Optional[str]]:
+        scene = ctx.latest_scene or {}
+        scene_name = scene.get("scene")
+        battle = (ctx.last_battle_result or {}).get("battle") or {}
+        damage = (ctx.last_battle_result or {}).get("damage") or {}
+
+        scene_actions = self.action_policy.get("scene_actions") or {}
+        if scene_name in scene_actions:
+            action = scene_actions[scene_name]
+            return action, self.action_to_target(action)
+
+        is_boss = bool(battle.get("boss")) or ctx.current_is_boss_node or ctx.current_node_type == "boss_battle"
+        if scene_name == "night_battle_choice" and is_boss and self.action_policy.get("戰鬥類型:王點") == "進夜戰":
+            action = "進夜戰"
+            return action, self.action_to_target(action)
+
+        if scene_name == "advance_or_retreat" and damage.get("has_taiha") and self.action_policy.get("大破") == "撤退":
+            action = "撤退"
+            return action, self.action_to_target(action)
+
+        return None, None
+
+
 def load_action_rules(config: dict[str, Any]) -> list[ActionRule]:
     rules: list[ActionRule] = []
     action_rules = config.get("action_rules") or {}
@@ -125,7 +198,15 @@ def load_action_rules(config: dict[str, Any]) -> list[ActionRule]:
 
 
 class KcAgent:
-    def __init__(self, event_q: asyncio.Queue[AgentEvent], scene_wait_q: asyncio.Queue[WaitSpec], command_q: asyncio.Queue[Command], config_path: str | Path = DEFAULT_AGENT_CONFIG) -> None:
+    def __init__(
+        self,
+        event_q: asyncio.Queue[AgentEvent],
+        scene_wait_q: asyncio.Queue[WaitSpec],
+        command_q: asyncio.Queue[Command],
+        config_path: str | Path = DEFAULT_AGENT_CONFIG,
+        status_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+        action_policy: Optional[dict[str, Any]] = None,
+    ) -> None:
         self.event_q = event_q
         self.scene_wait_q = scene_wait_q
         self.command_q = command_q

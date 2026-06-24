@@ -24,10 +24,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from kc_core.decoder import normalize_poi_raw_event
 from kc_core.event_models import JsonDict
+from utility.logger import setup_logger
 
 
 logger = setup_logger(name="battle_receiver")
@@ -62,8 +63,6 @@ class ReceiverConfig:
 
 
 def make_handler(config: ReceiverConfig):
-    fleet_state = FleetStateTracker()
-
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:
             if self.path not in {"/poi-event", "/poi-plugin-loaded"}:
@@ -81,7 +80,7 @@ def make_handler(config: ReceiverConfig):
 
             append_jsonl(config.raw_log_path, raw_event)
             #　main decode part
-            normalized = normalize_poi_raw_event(raw_event, fleet_state=fleet_state)
+            normalized = normalize_poi_raw_event(raw_event)
             if normalized is None:
                 print_unsupported(raw_event)
                 self.send_plain_response(202, b"ignored unsupported event")
