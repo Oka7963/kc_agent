@@ -74,6 +74,21 @@ class WaitSpec:
 
 
 @dataclass
+class SceneObservation:
+    """Latest screen-side scene/target observation produced by scene identify."""
+
+    scene: str
+    targets: JsonDict = field(default_factory=dict)
+    wait_id: Optional[str] = None
+    source_event_id: Optional[str] = None
+    correlation: JsonDict = field(default_factory=dict)
+
+    def target(self, name: str) -> Optional[JsonDict]:
+        target = self.targets.get(name)
+        return target if isinstance(target, dict) else None
+
+
+@dataclass
 class Command:
     command_id: str
     command: str
@@ -86,3 +101,4 @@ class Command:
     correlation: JsonDict = field(default_factory=dict)
     created_at_ms: int = field(default_factory=now_ms)
     valid_ms: int = 5000
+    target_observation: JsonDict = field(default_factory=dict)
