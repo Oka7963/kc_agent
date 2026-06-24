@@ -67,7 +67,25 @@ class PoiEventDecoderTest(unittest.TestCase):
         self.assertIsNotNone(event)
         self.assertEqual(event.type, "battle_result")
         self.assertTrue(event.payload["damage"]["has_taiha"])
-        self.assertEqual(event.payload["expected"]["next_scenes"][1]["required_targets"], ["retreat_button"])
+        retreat_scene = next(
+            scene for scene in event.payload["expected"]["next_scenes"]
+            if scene["scene"] == "advance_or_retreat"
+        )
+        self.assertEqual(retreat_scene["required_targets"], ["retreat_button"])
+
+    def test_boss_battle_result_ends_without_advance_or_retreat(self):
+        event = self.decoder.decode({
+            "event": "battle_result",
+            "phase": "poi_battle_result",
+            "battle_result": {"boss": True, "rank": "S"},
+        })
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.payload["expected"]["ui_wait_reason"], "boss_battle_result_end")
+        self.assertNotIn(
+            "advance_or_retreat",
+            [scene["scene"] for scene in event.payload["expected"]["next_scenes"]],
+        )
 
     def test_damage_thresholds_are_pure_and_testable(self):
         self.assertEqual(damage_state(5, 20), "taiha")
@@ -85,6 +103,10 @@ class PoiEventDecoderTest(unittest.TestCase):
             "drop_confirm_button",
             "advance_button",
             "retreat_button",
+            "next_button",
+            "branch_node_a",
+            "branch_node_b",
+            "branch_node_c",
         ]:
             self.assertIn(name, buttons)
             self.assertTrue(buttons[name]["template_file"].endswith(".png"))
@@ -92,6 +114,12 @@ class PoiEventDecoderTest(unittest.TestCase):
                 set(buttons[name]["coordinates"]),
                 {"client_xywh", "screen_xywh", "roi_xywh"},
             )
+
+    def test_decoder_config_has_policy_placeholders(self):
+        policy = self.decoder.config["policy"]
+        self.assertEqual(policy["formation"]["default_target"], "formation_line_ahead_button")
+        self.assertEqual(policy["night_battle"]["boss_flagship_sunk_target"], "no_night_battle_button")
+        self.assertEqual(policy["route"]["active_branching"]["mode"], "manual")
 
 
 if __name__ == "__main__":
