@@ -44,7 +44,7 @@ ACTION_SCENE_CACHE_TTL_MS = 15000
 DEFAULT_ACTION_POLICY_PATH = Path("utility/action_policy.json")
 
 from kc_core.decoder import normalize_poi_raw_event
-from kc_core.event_models import AgentEvent, Command, WaitSpec, new_id, to_int
+from kc_core.event_models import AgentEvent, Command, JsonDict, SceneObservation, WaitSpec, new_id, to_int
 
 
 class AgentState(str, enum.Enum):
@@ -84,10 +84,10 @@ class RuntimeContext:
     pending_wait_id: Optional[str] = None
     pending_scene: Optional[str] = None
     pending_command_id: Optional[str] = None
-    pending_command_target: Optional[str] = None
-    pending_command_reason: Optional[str] = None
+    latest_scene: Optional[SceneObservation] = None
+    fired_action_keys: set[str] = field(default_factory=set)
     last_event_id: Optional[str] = None
-    last_event_type: str = "-"
+    last_battle_result_event_id: Optional[str] = None
     last_battle_result: Optional[dict[str, Any]] = None
     last_battle_result_event_id: Optional[str] = None
     battle_result_confirm_clicked: bool = False
@@ -96,6 +96,41 @@ class RuntimeContext:
     latest_scene: Optional[dict[str, Any]] = None
     action_history: set[str] = field(default_factory=set)
     user_paused: bool = False
+
+
+@dataclass(frozen=True)
+class ActionRule:
+    """Condition that allows scene observation to become a click command."""
+
+    scene: str
+    target: str
+    reason: str
+    requires_event_condition: bool = True
+    requires_taiha: bool = False
+    forbid_target: Optional[str] = None
+
+
+ACTION_RULES = [
+    # Scenario 2: the current screen itself is enough. If result confirm is
+    # visible/clickable, clicking it is safe even if the POI event arrived late
+    # or was missed.
+    ActionRule(
+        scene="battle_result_confirm",
+        target="result_confirm_button",
+        reason="confirm_battle_result",
+        requires_event_condition=False,
+    ),
+    # Scenario 1: retreat is allowed only when both the event-derived safety
+    # condition and the screen observation match.
+    ActionRule(
+        scene="advance_or_retreat",
+        target="retreat_button",
+        reason="taiha_detected",
+        requires_event_condition=True,
+        requires_taiha=True,
+        forbid_target="advance_button",
+    ),
+]
 
 
 class KcAgent:
@@ -195,6 +230,9 @@ class KcAgent:
         self.ctx.sortie_id = new_id("sortie")
         self.ctx.battle_id = None
         self.ctx.map_node_id = None
+        self.ctx.last_battle_result_event_id = None
+        self.ctx.last_battle_result = None
+        self.ctx.fired_action_keys.clear()
         self.ctx.current_world = map_info.get("world")
         self.ctx.current_is_boss_node = False
         self.ctx.current_deck_id = to_int(fleet.get("deck_id"), 1)
@@ -288,41 +326,55 @@ class KcAgent:
         expected = payload.get("expected") or {}
         self.ctx.last_battle_result = payload
         self.ctx.last_battle_result_event_id = event.event_id
-        self.ctx.battle_result_confirm_clicked = False
-        self.ctx.drop_check_clicked = False
-        self.ctx.current_fleet = payload.get("fleet") or self.ctx.current_fleet
-        self.ctx.battle_progress = "battle_result"
         self.ctx.taiha_latch = bool(damage.get("has_taiha"))
         self.ctx.taiha_ships = damage.get("taiha_ships") or []
         self.ctx.state = AgentState.RETREAT_REQUIRED if self.ctx.taiha_latch else AgentState.WAIT_RESULT_CONFIRM
         if self.ctx.taiha_latch:
-            logger.warning("taiha detected: %s", self.ctx.taiha_ships)
-        logger.info(
-            "battle result: rank=%s boss=%s taiha=%s",
-            battle.get("rank"),
-            battle.get("boss"),
-            self.ctx.taiha_latch,
-        )
-        self.ctx.pending_scene = "battle_result_confirm"
-        await self.evaluate_policy()
+            print(f"[kc_agent][SAFETY] taiha detected: {self.ctx.taiha_ships}")
+        print(f"[kc_agent] battle result: rank={battle.get('rank')} boss={battle.get('boss')} taiha={self.ctx.taiha_latch}")
+        scenes = expected.get("next_scenes") or []
+        if scenes:
+            first = scenes[0]
+            await self.request_scene_wait(first.get("scene", "battle_result_confirm"), first.get("required_targets", ["result_confirm_button"]), first.get("timeout_ms", 8000), "battle_result_received", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "next_scenes": scenes, "next_scene_index": 0})
+        await self.try_fire_action_from_latest_scene(event.event_id)
 
     async def on_scene_ready(self, event: AgentEvent) -> None:
         p = event.payload
         scene = p.get("scene")
         wait_id = p.get("wait_id")
-        logger.info("scene_ready: scene=%s wait_id=%s", scene, wait_id)
+        corr = event.correlation or p.get("correlation") or {}
+        print(f"[kc_agent] scene_ready: scene={scene} wait_id={wait_id}")
         if not scene:
-            logger.warning("scene_ready ignored: missing scene payload=%s", p)
+            print("[kc_agent] scene_ready missing scene; ignored")
             return
-        self.ctx.scene_ready_cache[scene] = event
-        if wait_id and self.ctx.pending_wait_id and wait_id != self.ctx.pending_wait_id:
-            logger.warning("stale scene_ready ignored: %s != %s", wait_id, self.ctx.pending_wait_id)
+
+        observation = self.remember_scene_observation(event, corr)
+        if wait_id is not None and wait_id != self.ctx.pending_wait_id:
+            print(f"[kc_agent] stale scene_ready ignored: {wait_id} != {self.ctx.pending_wait_id}")
             return
-        if wait_id and wait_id == self.ctx.pending_wait_id:
+
+        if wait_id is not None:
             self.ctx.pending_wait_id = None
             self.ctx.pending_scene = None
-        self.ctx.latest_scene = p
-        if scene == "formation_select":
+
+        if await self.try_fire_action_from_scene(observation, event.event_id):
+            return
+
+        if wait_id is None:
+            print(f"[kc_agent] latest scene recorded; no action matched: {scene}")
+            return
+
+        scenes = corr.get("next_scenes") or []
+        idx = to_int(corr.get("next_scene_index"), 0) or 0
+        if idx + 1 < len(scenes):
+            nxt = scenes[idx + 1]
+            await self.request_scene_wait(nxt["scene"], nxt.get("required_targets", []), nxt.get("timeout_ms", 8000), f"next_scene_after_{scene}", event.event_id, {**corr, "next_scene_index": idx + 1})
+            self.ctx.state = AgentState.WAIT_FORMATION if nxt["scene"] == "formation_select" else AgentState.WAIT_ADVANCE_OR_RETREAT if nxt["scene"] == "advance_or_retreat" else self.ctx.state
+            return
+        if scene == "advance_or_retreat":
+            self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
+            print("[kc_agent] user input required: choose advance or retreat")
+        elif scene == "formation_select":
             self.ctx.state = AgentState.WAIT_FORMATION
             logger.info("user input required: select formation")
         elif scene == "night_battle_choice":
@@ -402,16 +454,15 @@ class KcAgent:
         self.ctx.pending_command_target = None
         self.ctx.pending_command_reason = None
         if p.get("status") == "executed":
-            if command_target == "result_confirm_button" and self.ctx.last_battle_result:
-                drop = ((self.ctx.last_battle_result.get("battle") or {}).get("drop") or {})
-                self.ctx.pending_scene = "drop_check" if has_drop(drop) else "advance_or_retreat"
-                logger.info("result confirmed; waiting for scene=%s from continuous scene checker", self.ctx.pending_scene)
-                return
-            if command_target == "drop_confirm_button" and self.ctx.last_battle_result:
-                self.ctx.pending_scene = "advance_or_retreat"
-                logger.info("drop confirmed; waiting for scene=%s from continuous scene checker", self.ctx.pending_scene)
-                return
-            logger.info("action executed; waiting for POI confirmation")
+            if self.ctx.last_battle_result:
+                scenes = (self.ctx.last_battle_result.get("expected") or {}).get("next_scenes") or []
+                advance_scene = next((s for s in scenes if s.get("scene") == "advance_or_retreat"), None)
+                if advance_scene:
+                    await self.request_scene_wait("advance_or_retreat", advance_scene.get("required_targets", ["advance_button", "retreat_button"]), advance_scene.get("timeout_ms", 10000), "after_result_confirm", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
+                    self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
+                    await self.try_fire_action_from_latest_scene(event.event_id)
+                    return
+            print("[kc_agent] action executed; waiting for POI confirmation")
         elif p.get("status") in ("rejected", "failed"):
             self.ctx.state = AgentState.ERROR
             logger.error("action rejected/failed")
@@ -436,13 +487,98 @@ class KcAgent:
         await self.scene_wait_q.put(spec)
         self.publish_status()
 
-    async def command_click(self, target: str, reason: str, trigger_event_id: Optional[str], wait_id: Optional[str], requires_scene: Optional[str], safety: Optional[dict[str, Any]] = None) -> None:
+    def remember_scene_observation(self, event: AgentEvent, correlation: JsonDict) -> SceneObservation:
+        payload = event.payload
+        previous_scene = self.ctx.latest_scene.scene if self.ctx.latest_scene else None
+        observation = SceneObservation(
+            scene=payload.get("scene"),
+            targets=payload.get("targets") or {},
+            wait_id=payload.get("wait_id"),
+            source_event_id=event.event_id,
+            correlation=correlation,
+        )
+        if previous_scene and previous_scene != observation.scene:
+            self.ctx.fired_action_keys = {
+                key for key in self.ctx.fired_action_keys if not key.endswith(":unbound")
+            }
+        self.ctx.latest_scene = observation
+        return observation
+
+    async def try_fire_action_from_latest_scene(self, trigger_event_id: Optional[str]) -> bool:
+        if self.ctx.latest_scene is None:
+            return False
+        return await self.try_fire_action_from_scene(self.ctx.latest_scene, trigger_event_id)
+
+    async def try_fire_action_from_scene(self, observation: SceneObservation, trigger_event_id: Optional[str]) -> bool:
+        if self.ctx.pending_command_id:
+            print(f"[kc_agent] command pending; action gate deferred for scene={observation.scene}")
+            return False
+
+        for rule in ACTION_RULES:
+            if rule.scene != observation.scene:
+                continue
+            target_observation = observation.target(rule.target)
+            if not self.target_is_clickable(target_observation):
+                continue
+            if not self.rule_event_condition_met(rule):
+                print(f"[kc_agent] action gate blocked: scene={rule.scene} target={rule.target} reason={rule.reason}")
+                continue
+
+            action_key = self.action_key(rule, observation)
+            if action_key in self.ctx.fired_action_keys:
+                print(f"[kc_agent] duplicate action suppressed: {action_key}")
+                return False
+
+            self.ctx.fired_action_keys.add(action_key)
+            safety = {"trigger_mode": "scene_only" if not rule.requires_event_condition else "event_and_scene"}
+            if rule.requires_taiha:
+                safety["taiha_latch"] = True
+            if rule.forbid_target:
+                safety["forbid_target"] = rule.forbid_target
+            await self.command_click(rule.target, rule.reason, trigger_event_id, observation.wait_id, rule.scene, safety, target_observation)
+            self.ctx.state = AgentState.WAIT_ACTION_RESULT
+            return True
+        return False
+
+    def rule_event_condition_met(self, rule: ActionRule) -> bool:
+        if not rule.requires_event_condition:
+            return True
+        if rule.requires_taiha and not self.ctx.taiha_latch:
+            return False
+        return True
+
+    @staticmethod
+    def target_is_clickable(target: Optional[JsonDict]) -> bool:
+        if not target:
+            return False
+        if target.get("visible") is False or target.get("clickable") is False:
+            return False
+        bbox = target.get("bbox_screen_xywh") or target.get("bbox")
+        return bool(bbox)
+
+    def action_key(self, rule: ActionRule, observation: SceneObservation) -> str:
+        if rule.requires_event_condition:
+            source_id = observation.wait_id or self.ctx.last_battle_result_event_id or "event"
+        else:
+            source_id = observation.wait_id or "unbound"
+        return f"{rule.scene}:{rule.target}:{source_id}"
+
+    async def command_click(self, target: str, reason: str, trigger_event_id: Optional[str], wait_id: Optional[str], requires_scene: Optional[str], safety: Optional[dict[str, Any]] = None, target_observation: Optional[JsonDict] = None) -> None:
         cmd_id = new_id("cmd")
         self.ctx.pending_command_id = cmd_id
-        self.ctx.pending_command_target = target
-        self.ctx.pending_command_reason = reason
-        cmd = Command(cmd_id, "click_target", target, reason, trigger_event_id, wait_id, requires_scene, safety or {}, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
-        logger.info("command: click %s, reason=%s, cmd_id=%s", target, reason, cmd_id)
+        cmd = Command(
+            command_id=cmd_id,
+            command="click_target",
+            target=target,
+            reason=reason,
+            trigger_event_id=trigger_event_id,
+            wait_id=wait_id,
+            requires_scene=requires_scene,
+            safety=safety or {},
+            correlation={"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id},
+            target_observation=target_observation or {},
+        )
+        print(f"[kc_agent] command: click {target}, reason={reason}, cmd_id={cmd_id}, bbox={(target_observation or {}).get('bbox_screen_xywh') or (target_observation or {}).get('bbox')}")
         await self.command_q.put(cmd)
         self.publish_status()
 
@@ -491,14 +627,8 @@ async def mouse_executor_stub(command_q: asyncio.Queue[Command], event_q: asynci
     while True:
         cmd = await command_q.get()
         try:
-            logger.info(
-                "mouse_executor_stub: command_id=%s command=%s target=%s reason=%s safety=%s",
-                cmd.command_id,
-                cmd.command,
-                cmd.target,
-                cmd.reason,
-                cmd.safety,
-            )
+            bbox = cmd.target_observation.get("bbox_screen_xywh") or cmd.target_observation.get("bbox")
+            print(f"[mouse_executor_stub] command_id={cmd.command_id} command={cmd.command} target={cmd.target} bbox={bbox} reason={cmd.reason} safety={cmd.safety}")
             if auto_execute:
                 await asyncio.sleep(0.2)
                 await event_q.put(AgentEvent("action_result", {"command_id": cmd.command_id, "status": "executed", "target": cmd.target}, source="mouse_executor_stub", correlation=cmd.correlation))

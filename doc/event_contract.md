@@ -132,3 +132,15 @@ Created from raw `event == battle_result` or `phase == poi_battle_result`.
 ## Dynamic decoder configuration
 
 `config/decoder_rules.json` owns route constants, node classification values, and scene target/timeouts. Change the JSON when a route condition or target requirement changes; avoid hard-coding these dynamic arguments in the receiver or agent.
+
+## Action gating
+
+Point-and-click actions are gated by scene observations and, when required,
+event-derived conditions. The agent stores the latest `scene_ready` observation
+from scene identification. A scene-only rule may fire from the screen condition
+alone, such as `battle_result_confirm` with `result_confirm_button` visible and
+clickable. An event-and-scene rule requires both the latest screen observation
+and runtime state derived from a normalized event, such as `advance_or_retreat`
+with `retreat_button` visible while `damage.has_taiha` has latched retreat
+safety. Commands include the target observation so the executor can click the
+coordinates validated by scene identification rather than searching again.
