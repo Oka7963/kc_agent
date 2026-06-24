@@ -85,6 +85,17 @@ sortie or practice battle. The receiver prints exported events and appends them
 to `poi_events.jsonl` by default. Run the receiver with `--help` to see options
 such as `--log` and `--summary-only`.
 
+
+### Event decoder and contract
+
+The battle-event decoder is centralized in `kc_core/decoder.py` and reads route,
+node-classification, scene-target, and timeout values from
+`config/decoder_rules.json`. The HTTP receiver only receives/logs events and
+delegates normalization to this shared decoder, while `kc_agent.py` consumes the
+normalized `AgentEvent` objects and owns runtime workflow state. See
+`doc/event_contract.md` for the raw-event and normalized-event schema, including
+which fields are key condition elements for routing and safety decisions.
+
 ## Project Structure
 
 ```
