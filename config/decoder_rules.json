@@ -45,6 +45,44 @@
         "retreat_button"
       ],
       "timeout_ms": 10000
+    },
+    "post_battle_next": {
+      "required_targets": [
+        "next_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "active_branching_select": {
+      "required_targets": [
+        "branch_node_a",
+        "branch_node_b",
+        "branch_node_c"
+      ],
+      "timeout_ms": 15000
+    },
+    "resource_node_confirm": {
+      "required_targets": [
+        "resource_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "maelstrom_confirm": {
+      "required_targets": [
+        "maelstrom_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "air_recon_confirm": {
+      "required_targets": [
+        "air_recon_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "nothing_happened_confirm": {
+      "required_targets": [
+        "map_production_confirm_button"
+      ],
+      "timeout_ms": 8000
     }
   },
   "node_classification": {
@@ -192,6 +230,123 @@
         "screen_xywh": null,
         "roi_xywh": null
       }
+    },
+    "next_button": {
+      "description": "Generic post-battle next button placeholder for EXP/MVP/drop/result continuation screens.",
+      "template_file": "targets/next_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "branch_node_a": {
+      "description": "Active branching selectable route node A placeholder.",
+      "template_file": "targets/branch_node_a.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "branch_node_b": {
+      "description": "Active branching selectable route node B placeholder.",
+      "template_file": "targets/branch_node_b.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "branch_node_c": {
+      "description": "Active branching selectable route node C placeholder.",
+      "template_file": "targets/branch_node_c.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "resource_confirm_button": {
+      "description": "Resource node confirmation placeholder.",
+      "template_file": "targets/resource_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "maelstrom_confirm_button": {
+      "description": "Maelstrom node confirmation placeholder.",
+      "template_file": "targets/maelstrom_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "air_recon_confirm_button": {
+      "description": "Air reconnaissance node confirmation placeholder.",
+      "template_file": "targets/air_recon_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "map_production_confirm_button": {
+      "description": "Nothing-happened/map-production confirmation placeholder.",
+      "template_file": "targets/map_production_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_double_line_button": {
+      "description": "Double Line formation button placeholder.",
+      "template_file": "targets/formation_double_line_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_diamond_button": {
+      "description": "Diamond formation button placeholder.",
+      "template_file": "targets/formation_diamond_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_echelon_button": {
+      "description": "Echelon formation button placeholder.",
+      "template_file": "targets/formation_echelon_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_line_abreast_button": {
+      "description": "Line Abreast formation button placeholder.",
+      "template_file": "targets/formation_line_abreast_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_vanguard_button": {
+      "description": "Vanguard formation button placeholder.",
+      "template_file": "targets/formation_vanguard_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
     }
   },
   "action_rules": {
@@ -220,6 +375,11 @@
         "scene": "drop_confirm",
         "target": "drop_confirm_button",
         "reason": "confirm_drop"
+      },
+      {
+        "scene": "post_battle_next",
+        "target": "next_button",
+        "reason": "click_post_battle_next"
       }
     ],
     "event_and_scene": [
@@ -233,5 +393,38 @@
         "forbid_target": "advance_button"
       }
     ]
+  },
+  "policy": {
+    "formation": {
+      "default_target": "formation_line_ahead_button",
+      "submarine_node_target": "formation_line_abreast_button",
+      "air_raid_node_target": "formation_diamond_button",
+      "vanguard_enabled": false,
+      "available_targets": [
+        "formation_line_ahead_button",
+        "formation_double_line_button",
+        "formation_diamond_button",
+        "formation_echelon_button",
+        "formation_line_abreast_button",
+        "formation_vanguard_button"
+      ]
+    },
+    "night_battle": {
+      "default_target": "no_night_battle_button",
+      "boss_flagship_sunk_target": "no_night_battle_button",
+      "boss_flagship_not_sunk_target": null,
+      "notes": "When boss flagship is already sunk, skip night battle; otherwise leave unset for manual/future policy."
+    },
+    "route": {
+      "active_branching": {
+        "mode": "manual",
+        "default_target": null,
+        "available_targets": [
+          "branch_node_a",
+          "branch_node_b",
+          "branch_node_c"
+        ]
+      }
+    }
   }
 }

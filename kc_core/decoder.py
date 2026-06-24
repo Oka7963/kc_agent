@@ -257,14 +257,27 @@ class PoiEventDecoder:
             if iid in hp_by_iid:
                 ship.update(hp_by_iid[iid])
         damage = analyze_damage_from_fleet(fleet)
-        advance_scene = self.scene("retreat_only" if damage["has_taiha"] else "advance_or_retreat")
+        is_boss_result = bool(result.get("boss"))
+        has_drop = bool(
+            result.get("drop_ship_id")
+            or result.get("dropShipId")
+            or result.get("drop_item")
+            or result.get("dropItem")
+            or result.get("event_item")
+            or result.get("eventItem")
+        )
+        next_scenes = [self.scene("battle_result_confirm"), self.scene("post_battle_next")]
+        if has_drop:
+            next_scenes.append(self.scene("drop_confirm"))
+        if not is_boss_result:
+            next_scenes.append(self.scene("retreat_only" if damage["has_taiha"] else "advance_or_retreat"))
         payload = self._base_payload(raw, "battle_result", "result")
         payload.update({
             "battle": {"rank": result.get("rank"), "boss": result.get("boss"), "map": result.get("map"), "map_cell": result.get("map_cell") or result.get("mapCell"), "enemy_name": result.get("enemy"), "mvp": result.get("mvp") or [], "drop": {"ship_id": result.get("drop_ship_id") or result.get("dropShipId"), "item": result.get("drop_item") or result.get("dropItem"), "event_item": result.get("event_item") or result.get("eventItem")}},
             "fleet": fleet,
             "damage": damage,
             "sortie": raw.get("sortie_snapshot") or {},
-            "expected": {"user_input_expected": True, "ui_wait_reason": "battle_result_confirm_then_advance_or_retreat", "next_scenes": [self.scene("battle_result_confirm"), advance_scene]},
+            "expected": {"user_input_expected": True, "ui_wait_reason": "boss_battle_result_end" if is_boss_result else "battle_result_confirm_then_advance_or_retreat", "next_scenes": next_scenes},
         })
         return self._agent_event("battle_result", payload, raw)
 

@@ -48,6 +48,7 @@ class KcAgentActionGateTest(unittest.IsolatedAsyncioTestCase):
             ("formation_select", "formation_line_ahead_button"),
             ("night_battle_choice", "no_night_battle_button"),
             ("drop_confirm", "drop_confirm_button"),
+            ("post_battle_next", "next_button"),
         ]
 
         for scene, target in cases:
@@ -59,6 +60,12 @@ class KcAgentActionGateTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(cmd.target, target)
                 self.assertEqual(cmd.requires_scene, scene)
                 self.assertEqual(cmd.safety["trigger_mode"], "scene_only")
+
+    async def test_active_branching_defaults_to_manual_route_policy(self):
+        await self.agent.handle_event(scene_ready("active_branching_select", "branch_node_a"))
+
+        self.assertEqual(self.command_q.qsize(), 0)
+        self.assertEqual(self.agent.ctx.latest_scene.scene, "active_branching_select")
 
     async def test_event_and_scene_rule_does_not_click_retreat_without_taiha_event(self):
         await self.agent.handle_event(scene_ready("advance_or_retreat", "retreat_button"))

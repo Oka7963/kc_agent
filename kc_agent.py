@@ -23,6 +23,7 @@ import asyncio
 import enum
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from kc_core.decoder import normalize_poi_raw_event
@@ -83,58 +84,45 @@ class ActionRule:
     forbid_target: Optional[str] = None
 
 
-ACTION_RULES = [
-    # Scene-only normal-battle flow actions. The current screen itself is enough:
-    # if the target is visible/clickable, clicking it is safe even if the POI
-    # event arrived late or was missed.
-    ActionRule(
-        scene="compass_or_map_production",
-        target="rashin_confirm_button",
-        reason="dismiss_rashin_or_map_production",
-        requires_event_condition=False,
-    ),
-    ActionRule(
-        scene="formation_select",
-        target="formation_line_ahead_button",
-        reason="select_default_formation",
-        requires_event_condition=False,
-    ),
-    ActionRule(
-        scene="night_battle_choice",
-        target="no_night_battle_button",
-        reason="select_no_night_battle",
-        requires_event_condition=False,
-    ),
-    ActionRule(
-        scene="battle_result_confirm",
-        target="result_confirm_button",
-        reason="confirm_battle_result",
-        requires_event_condition=False,
-    ),
-    ActionRule(
-        scene="drop_confirm",
-        target="drop_confirm_button",
-        reason="confirm_drop",
-        requires_event_condition=False,
-    ),
-    # Scenario 1: retreat is allowed only when both the event-derived safety
-    # condition and the screen observation match.
-    ActionRule(
-        scene="advance_or_retreat",
-        target="retreat_button",
-        reason="taiha_detected",
-        requires_event_condition=True,
-        requires_taiha=True,
-        forbid_target="advance_button",
-    ),
-]
+DEFAULT_AGENT_CONFIG = Path(__file__).resolve().parent / "config" / "decoder_rules.json"
+
+
+def load_agent_policy(config_path: str | Path = DEFAULT_AGENT_CONFIG) -> dict[str, Any]:
+    with Path(config_path).open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_action_rules(config: dict[str, Any]) -> list[ActionRule]:
+    rules: list[ActionRule] = []
+    action_rules = config.get("action_rules") or {}
+    for item in action_rules.get("scene_only") or []:
+        rules.append(ActionRule(
+            scene=item["scene"],
+            target=item["target"],
+            reason=item.get("reason", item["target"]),
+            requires_event_condition=False,
+        ))
+    for item in action_rules.get("event_and_scene") or []:
+        requires = item.get("requires") or {}
+        rules.append(ActionRule(
+            scene=item["scene"],
+            target=item["target"],
+            reason=item.get("reason", item["target"]),
+            requires_event_condition=True,
+            requires_taiha=bool(requires.get("taiha_latch")),
+            forbid_target=item.get("forbid_target"),
+        ))
+    return rules
 
 
 class KcAgent:
-    def __init__(self, event_q: asyncio.Queue[AgentEvent], scene_wait_q: asyncio.Queue[WaitSpec], command_q: asyncio.Queue[Command]) -> None:
+    def __init__(self, event_q: asyncio.Queue[AgentEvent], scene_wait_q: asyncio.Queue[WaitSpec], command_q: asyncio.Queue[Command], config_path: str | Path = DEFAULT_AGENT_CONFIG) -> None:
         self.event_q = event_q
         self.scene_wait_q = scene_wait_q
         self.command_q = command_q
+        self.policy_config = load_agent_policy(config_path)
+        self.action_rules = load_action_rules(self.policy_config)
+        self.route_policy = ((self.policy_config.get("policy") or {}).get("route") or {})
         self.ctx = RuntimeContext()
 
     async def run(self) -> None:
@@ -262,6 +250,9 @@ class KcAgent:
             self.ctx.pending_wait_id = None
             self.ctx.pending_scene = None
 
+        if await self.try_fire_route_policy_action(observation, event.event_id):
+            return
+
         if await self.try_fire_action_from_scene(observation, event.event_id):
             return
 
@@ -360,7 +351,7 @@ class KcAgent:
             print(f"[kc_agent] command pending; action gate deferred for scene={observation.scene}")
             return False
 
-        for rule in ACTION_RULES:
+        for rule in self.action_rules:
             if rule.scene != observation.scene:
                 continue
             target_observation = observation.target(rule.target)
@@ -385,6 +376,31 @@ class KcAgent:
             self.ctx.state = AgentState.WAIT_ACTION_RESULT
             return True
         return False
+
+    async def try_fire_route_policy_action(self, observation: SceneObservation, trigger_event_id: Optional[str]) -> bool:
+        if observation.scene != "active_branching_select":
+            return False
+        active_branching = self.route_policy.get("active_branching") or {}
+        mode = active_branching.get("mode", "manual")
+        target = active_branching.get("default_target")
+        if mode != "auto" or not target:
+            print("[kc_agent] active branching requires manual route selection")
+            return False
+        target_observation = observation.target(target)
+        if not self.target_is_clickable(target_observation):
+            print(f"[kc_agent] route policy target not clickable: {target}")
+            return False
+        await self.command_click(
+            target,
+            "route_policy_active_branching",
+            trigger_event_id,
+            observation.wait_id,
+            observation.scene,
+            {"trigger_mode": "route_policy", "route_mode": mode},
+            target_observation,
+        )
+        self.ctx.state = AgentState.WAIT_ACTION_RESULT
+        return True
 
     def rule_event_condition_met(self, rule: ActionRule) -> bool:
         if not rule.requires_event_condition:
