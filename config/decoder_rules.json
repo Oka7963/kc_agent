@@ -1,16 +1,74 @@
 {
   "schema": "kc.agent.decoder_rules.v1",
   "scene_defaults": {
-    "compass_or_map_production": {"required_targets": [], "timeout_ms": 8000},
-    "formation_select": {"required_targets": ["formation_buttons"], "timeout_ms": 10000},
-    "night_battle_choice": {"required_targets": ["night_battle_button", "no_night_battle_button"], "timeout_ms": 10000},
-    "battle_result_confirm": {"required_targets": ["result_confirm_button"], "timeout_ms": 8000},
-    "advance_or_retreat": {"required_targets": ["advance_button", "retreat_button"], "timeout_ms": 10000},
-    "retreat_only": {"scene": "advance_or_retreat", "required_targets": ["retreat_button"], "timeout_ms": 10000}
+    "compass_or_map_production": {
+      "required_targets": [
+        "rashin_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "formation_select": {
+      "required_targets": [
+        "formation_line_ahead_button"
+      ],
+      "timeout_ms": 10000
+    },
+    "night_battle_choice": {
+      "required_targets": [
+        "night_battle_button",
+        "no_night_battle_button"
+      ],
+      "timeout_ms": 10000
+    },
+    "battle_result_confirm": {
+      "required_targets": [
+        "result_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "drop_confirm": {
+      "required_targets": [
+        "drop_confirm_button"
+      ],
+      "timeout_ms": 8000
+    },
+    "advance_or_retreat": {
+      "required_targets": [
+        "advance_button",
+        "retreat_button"
+      ],
+      "timeout_ms": 10000
+    },
+    "retreat_only": {
+      "scene": "advance_or_retreat",
+      "required_targets": [
+        "retreat_button"
+      ],
+      "timeout_ms": 10000
+    }
   },
   "node_classification": {
-    "boss": {"color_no": [5], "event_id": [5]},
-    "battle": {"color_no": [4, 5], "event_kind": [1, 2, 3, 4], "has_enemy_deck_info": true},
+    "boss": {
+      "color_no": [
+        5
+      ],
+      "event_id": [
+        5
+      ]
+    },
+    "battle": {
+      "color_no": [
+        4,
+        5
+      ],
+      "event_kind": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "has_enemy_deck_info": true
+    },
     "non_battle_by_color": {
       "2": "resource",
       "3": "maelstrom",
@@ -22,15 +80,25 @@
   "event_routes": {
     "sortie_start_requested": {
       "description": "Raw map start request was sent; sortie context can be initialized.",
-      "match": {"event": "map_start_request", "path": "/kcsapi/api_req_map/start", "phase": "request"},
+      "match": {
+        "event": "map_start_request",
+        "path": "/kcsapi/api_req_map/start",
+        "phase": "request"
+      },
       "next_scenes": []
     },
     "map_node_arrived": {
       "description": "Raw map start/next response arrived; map node and next required UI scenes can be derived.",
-      "match_events": ["map_start_response", "map_next_response"],
+      "match_events": [
+        "map_start_response",
+        "map_next_response"
+      ],
       "compass_condition": "response_body.api_rashin_flg == 1",
       "battle_condition": "derived map.is_battle_node == true",
-      "source_kind_by_path": {"/kcsapi/api_req_map/start": "map_start", "/kcsapi/api_req_map/next": "map_next"}
+      "source_kind_by_path": {
+        "/kcsapi/api_req_map/start": "map_start",
+        "/kcsapi/api_req_map/next": "map_next"
+      }
     },
     "formation_selected": {
       "description": "A battle request means the user selected formation and battle has started.",
@@ -38,14 +106,132 @@
     },
     "day_battle_received": {
       "description": "Day battle response arrived; if api_midnight_flag is 1 the night-battle-choice UI is expected.",
-      "match_events": ["sortie_battle_response"],
+      "match_events": [
+        "sortie_battle_response"
+      ],
       "night_condition": "response_body.api_midnight_flag == 1"
     },
     "battle_result": {
       "description": "Poi battle result arrived; damage is evaluated to choose advance/retreat requirements.",
-      "match_events": ["battle_result"],
+      "match_events": [
+        "battle_result"
+      ],
       "match_phase": "poi_battle_result",
       "taiha_condition": "derived damage.has_taiha == true"
     }
+  },
+  "target_buttons": {
+    "rashin_confirm_button": {
+      "description": "Click target used to dismiss compass/rashin or map-production screens.",
+      "template_file": "targets/rashin_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "formation_line_ahead_button": {
+      "description": "Default formation-select action placeholder; replace if a different formation policy is desired.",
+      "template_file": "targets/formation_line_ahead_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "night_battle_button": {
+      "description": "Night-battle choice button placeholder.",
+      "template_file": "targets/night_battle_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "no_night_battle_button": {
+      "description": "Default no-night-battle choice placeholder.",
+      "template_file": "targets/no_night_battle_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "result_confirm_button": {
+      "description": "Battle-result confirmation button placeholder.",
+      "template_file": "targets/result_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "drop_confirm_button": {
+      "description": "Ship/item drop confirmation button placeholder.",
+      "template_file": "targets/drop_confirm_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "advance_button": {
+      "description": "Post-battle advance button placeholder; intentionally not auto-clicked by default.",
+      "template_file": "targets/advance_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    },
+    "retreat_button": {
+      "description": "Post-battle retreat button placeholder.",
+      "template_file": "targets/retreat_button.png",
+      "coordinates": {
+        "client_xywh": null,
+        "screen_xywh": null,
+        "roi_xywh": null
+      }
+    }
+  },
+  "action_rules": {
+    "scene_only": [
+      {
+        "scene": "compass_or_map_production",
+        "target": "rashin_confirm_button",
+        "reason": "dismiss_rashin_or_map_production"
+      },
+      {
+        "scene": "formation_select",
+        "target": "formation_line_ahead_button",
+        "reason": "select_default_formation"
+      },
+      {
+        "scene": "night_battle_choice",
+        "target": "no_night_battle_button",
+        "reason": "select_no_night_battle"
+      },
+      {
+        "scene": "battle_result_confirm",
+        "target": "result_confirm_button",
+        "reason": "confirm_battle_result"
+      },
+      {
+        "scene": "drop_confirm",
+        "target": "drop_confirm_button",
+        "reason": "confirm_drop"
+      }
+    ],
+    "event_and_scene": [
+      {
+        "scene": "advance_or_retreat",
+        "target": "retreat_button",
+        "reason": "taiha_detected",
+        "requires": {
+          "taiha_latch": true
+        },
+        "forbid_target": "advance_button"
+      }
+    ]
   }
 }
