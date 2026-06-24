@@ -1,0 +1,51 @@
+{
+  "schema": "kc.agent.decoder_rules.v1",
+  "scene_defaults": {
+    "compass_or_map_production": {"required_targets": [], "timeout_ms": 8000},
+    "formation_select": {"required_targets": ["formation_buttons"], "timeout_ms": 10000},
+    "night_battle_choice": {"required_targets": ["night_battle_button", "no_night_battle_button"], "timeout_ms": 10000},
+    "battle_result_confirm": {"required_targets": ["result_confirm_button"], "timeout_ms": 8000},
+    "advance_or_retreat": {"required_targets": ["advance_button", "retreat_button"], "timeout_ms": 10000},
+    "retreat_only": {"scene": "advance_or_retreat", "required_targets": ["retreat_button"], "timeout_ms": 10000}
+  },
+  "node_classification": {
+    "boss": {"color_no": [5], "event_id": [5]},
+    "battle": {"color_no": [4, 5], "event_kind": [1, 2, 3, 4], "has_enemy_deck_info": true},
+    "non_battle_by_color": {
+      "2": "resource",
+      "3": "maelstrom",
+      "6": "nothing_happened",
+      "8": "port",
+      "9": "air_recon"
+    }
+  },
+  "event_routes": {
+    "sortie_start_requested": {
+      "description": "Raw map start request was sent; sortie context can be initialized.",
+      "match": {"event": "map_start_request", "path": "/kcsapi/api_req_map/start", "phase": "request"},
+      "next_scenes": []
+    },
+    "map_node_arrived": {
+      "description": "Raw map start/next response arrived; map node and next required UI scenes can be derived.",
+      "match_events": ["map_start_response", "map_next_response"],
+      "compass_condition": "response_body.api_rashin_flg == 1",
+      "battle_condition": "derived map.is_battle_node == true",
+      "source_kind_by_path": {"/kcsapi/api_req_map/start": "map_start", "/kcsapi/api_req_map/next": "map_next"}
+    },
+    "formation_selected": {
+      "description": "A battle request means the user selected formation and battle has started.",
+      "event_suffix": "_battle_request"
+    },
+    "day_battle_received": {
+      "description": "Day battle response arrived; if api_midnight_flag is 1 the night-battle-choice UI is expected.",
+      "match_events": ["sortie_battle_response"],
+      "night_condition": "response_body.api_midnight_flag == 1"
+    },
+    "battle_result": {
+      "description": "Poi battle result arrived; damage is evaluated to choose advance/retreat requirements.",
+      "match_events": ["battle_result"],
+      "match_phase": "poi_battle_result",
+      "taiha_condition": "derived damage.has_taiha == true"
+    }
+  }
+}
