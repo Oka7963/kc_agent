@@ -138,9 +138,15 @@ Created from raw `event == battle_result` or `phase == poi_battle_result`.
 Point-and-click actions are gated by scene observations and, when required,
 event-derived conditions. The agent stores the latest `scene_ready` observation
 from scene identification. A scene-only rule may fire from the screen condition
-alone, such as `battle_result_confirm` with `result_confirm_button` visible and
-clickable. An event-and-scene rule requires both the latest screen observation
-and runtime state derived from a normalized event, such as `advance_or_retreat`
-with `retreat_button` visible while `damage.has_taiha` has latched retreat
-safety. Commands include the target observation so the executor can click the
-coordinates validated by scene identification rather than searching again.
+alone, such as `compass_or_map_production` with `rashin_confirm_button`,
+`formation_select` with `formation_line_ahead_button`,
+`night_battle_choice` with `no_night_battle_button`,
+`battle_result_confirm` with `result_confirm_button`, or `drop_confirm` with
+`drop_confirm_button` visible and clickable. An event-and-scene rule requires
+both the latest screen observation and runtime state derived from a normalized
+event, such as `advance_or_retreat` with `retreat_button` visible while
+`damage.has_taiha` has latched retreat safety. Commands include the target
+observation so the executor can click the coordinates validated by scene
+identification rather than searching again. `config/decoder_rules.json` keeps
+placeholder template filenames and `client_xywh` / `screen_xywh` / `roi_xywh`
+coordinate slots for each target button.

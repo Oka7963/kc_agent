@@ -42,6 +42,24 @@ class KcAgentActionGateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cmd.target_observation["bbox_screen_xywh"], [10, 20, 30, 40])
         self.assertEqual(self.agent.ctx.state, AgentState.WAIT_ACTION_RESULT)
 
+    async def test_scene_only_rules_cover_normal_battle_flow_buttons(self):
+        cases = [
+            ("compass_or_map_production", "rashin_confirm_button"),
+            ("formation_select", "formation_line_ahead_button"),
+            ("night_battle_choice", "no_night_battle_button"),
+            ("drop_confirm", "drop_confirm_button"),
+        ]
+
+        for scene, target in cases:
+            with self.subTest(scene=scene, target=target):
+                self.agent.ctx.pending_command_id = None
+                self.agent.ctx.fired_action_keys.clear()
+                await self.agent.handle_event(scene_ready(scene, target))
+                cmd = await self.command_q.get()
+                self.assertEqual(cmd.target, target)
+                self.assertEqual(cmd.requires_scene, scene)
+                self.assertEqual(cmd.safety["trigger_mode"], "scene_only")
+
     async def test_event_and_scene_rule_does_not_click_retreat_without_taiha_event(self):
         await self.agent.handle_event(scene_ready("advance_or_retreat", "retreat_button"))
 

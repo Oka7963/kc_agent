@@ -75,6 +75,24 @@ class PoiEventDecoderTest(unittest.TestCase):
         self.assertEqual(damage_state(19, 20), "shouha_or_scratch")
         self.assertEqual(damage_state(20, 20), "normal")
 
+    def test_decoder_config_has_target_button_placeholders(self):
+        buttons = self.decoder.config["target_buttons"]
+        for name in [
+            "rashin_confirm_button",
+            "formation_line_ahead_button",
+            "no_night_battle_button",
+            "result_confirm_button",
+            "drop_confirm_button",
+            "advance_button",
+            "retreat_button",
+        ]:
+            self.assertIn(name, buttons)
+            self.assertTrue(buttons[name]["template_file"].endswith(".png"))
+            self.assertEqual(
+                set(buttons[name]["coordinates"]),
+                {"client_xywh", "screen_xywh", "roi_xywh"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

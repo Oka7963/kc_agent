@@ -111,13 +111,37 @@ class ActionRule:
 
 
 ACTION_RULES = [
-    # Scenario 2: the current screen itself is enough. If result confirm is
-    # visible/clickable, clicking it is safe even if the POI event arrived late
-    # or was missed.
+    # Scene-only normal-battle flow actions. The current screen itself is enough:
+    # if the target is visible/clickable, clicking it is safe even if the POI
+    # event arrived late or was missed.
+    ActionRule(
+        scene="compass_or_map_production",
+        target="rashin_confirm_button",
+        reason="dismiss_rashin_or_map_production",
+        requires_event_condition=False,
+    ),
+    ActionRule(
+        scene="formation_select",
+        target="formation_line_ahead_button",
+        reason="select_default_formation",
+        requires_event_condition=False,
+    ),
+    ActionRule(
+        scene="night_battle_choice",
+        target="no_night_battle_button",
+        reason="select_no_night_battle",
+        requires_event_condition=False,
+    ),
     ActionRule(
         scene="battle_result_confirm",
         target="result_confirm_button",
         reason="confirm_battle_result",
+        requires_event_condition=False,
+    ),
+    ActionRule(
+        scene="drop_confirm",
+        target="drop_confirm_button",
+        reason="confirm_drop",
         requires_event_condition=False,
     ),
     # Scenario 1: retreat is allowed only when both the event-derived safety
