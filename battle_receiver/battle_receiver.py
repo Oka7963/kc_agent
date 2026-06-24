@@ -209,15 +209,15 @@ def active_fleet_from_fleets(fleets: list[JsonDict], sortie: JsonDict, deck_id: 
     for ship in selected.get("ships") or []:
         ships.append({
             "pos": ship.get("position") or ship.get("pos"),
-            "instance_id": ship.get("instance_id"),
-            "ship_id": ship.get("ship_id"),
+            "instance_id": ship.get("instance_id"), # id of our fleet
+            #"ship_id": ship.get("ship_id"), # id in index
             "level": ship.get("level"),
             "now_hp": ship.get("now_hp"),
             "max_hp": ship.get("max_hp"),
             "cond": ship.get("cond"),
-            "fuel": ship.get("fuel"),
-            "bullet": ship.get("bullet"),
-            "slot": ship.get("slot") or [],
+            #"fuel": ship.get("fuel"),
+            #"bullet": ship.get("bullet"),
+            #"slot": ship.get("slot") or [],
         })
 
     return {
@@ -259,6 +259,7 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
     active_fleet = fleet_state.active_fleet if fleet_state is not None else lambda deck_id=1: active_fleet_from_snapshot(raw, deck_id)
     sortie_snapshot = fleet_state.sortie if fleet_state is not None else raw.get("sortie_snapshot") or {}
 
+    # TODO: add other fleet update events for non-combat situation
     if name and name.startswith(("ship2_update_", "ship3_update_", "deck_update_")):
         fleet = active_fleet(1)
         return AgentEvent(
@@ -314,13 +315,11 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
         if to_int(body.get("api_rashin_flg")) == 1:
             next_scenes.append({
                 "scene": "compass_or_map_production",
-                "required_targets": [],
                 "timeout_ms": 8000,
             })
         if is_battle:
             next_scenes.append({
                 "scene": "formation_select",
-                "required_targets": ["formation_buttons"],
                 "timeout_ms": 10000,
             })
 
@@ -394,6 +393,8 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
         }
         return AgentEvent("formation_selected", payload, new_id("poi"), ts_ms, "poi")
 
+
+    # when we receive this event, we already know the fleet's health after this stage of battle, use this for fleet state update
     if name == "sortie_battle_response":
         formation = body.get("api_formation") or []
         can_night = to_int(body.get("api_midnight_flag")) == 1
@@ -401,7 +402,6 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
         if can_night:
             next_scenes.append({
                 "scene": "night_battle_choice",
-                "required_targets": ["night_battle_button", "no_night_battle_button"],
                 "timeout_ms": 10000,
             })
 
@@ -433,7 +433,7 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
                     "raigeki": bool(body.get("api_raigeki")),
                 },
             },
-            "fleet": active_fleet(1),
+            "fleet": active_fleet(1), # TODO: add active_fleet(2) for event map
             "enemy": {
                 "ship_ids": body.get("api_ship_ke") or [],
                 "start_hp": body.get("api_e_nowhps") or [],
@@ -450,9 +450,9 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
     if name == "battle_result" or raw.get("phase") == "poi_battle_result":
         result = raw.get("battle_result") or raw.get("result") or {}
         fleet = active_fleet(1)
-        deck_ship_ids = result.get("deck_ship_id") or result.get("deckShipId") or []
-        deck_hp = result.get("deck_hp") or result.get("deckHp") or []
-        deck_init_hp = result.get("deck_init_hp") or result.get("deckInitHp") or []
+        deck_ship_ids = result.get("deck_ship_id") or [] # our fleet ship id
+        deck_hp = result.get("deck_hp") or [] # current HP
+        deck_init_hp = result.get("deck_init_hp") or [] # max HP
 
         hp_by_iid: dict[int, JsonDict] = {}
         for idx, iid in enumerate(deck_ship_ids):
@@ -465,12 +465,11 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
             }
 
         for ship in fleet.get("ships", []):
-            iid = to_int(ship.get("instance_id"))
+            iid = to_int(ship.get("instance_id")) # ship ID
             if iid in hp_by_iid:
                 ship.update(hp_by_iid[iid])
 
         damage = analyze_damage_from_fleet(fleet)
-        required_targets = ["retreat_button"] if damage["has_taiha"] else ["advance_button", "retreat_button"]
         drop = {
             "ship_id": result.get("drop_ship_id") or result.get("dropShipId"),
             "item": result.get("drop_item") or result.get("dropItem"),
@@ -479,19 +478,16 @@ def normalize_poi_raw_event(raw: JsonDict, fleet_state: Optional[FleetStateTrack
         next_scenes = [
             {
                 "scene": "battle_result_confirm",
-                "required_targets": ["result_confirm_button"],
                 "timeout_ms": 8000,
             },
         ]
         if has_drop(drop):
             next_scenes.append({
                 "scene": "drop_check",
-                "required_targets": ["drop_confirm_button"],
                 "timeout_ms": 10000,
             })
         next_scenes.append({
             "scene": "advance_or_retreat",
-            "required_targets": required_targets,
             "timeout_ms": 10000,
         })
         payload = {
@@ -552,6 +548,7 @@ def make_handler(config: ReceiverConfig):
                 return
 
             append_jsonl(config.raw_log_path, raw_event)
+            #　main decode part
             normalized = normalize_poi_raw_event(raw_event, fleet_state=fleet_state)
             if normalized is None:
                 print_unsupported(raw_event)

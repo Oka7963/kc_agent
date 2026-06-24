@@ -44,6 +44,7 @@ from utility.logger import setup_logger
 
 logger = setup_logger(name="kc_agent")
 ACTION_SCENE_CACHE_TTL_MS = 15000
+DEFAULT_ACTION_POLICY_PATH = Path("utility/action_policy.json")
 
 
 def now_ms() -> int:
@@ -139,6 +140,7 @@ class RuntimeContext:
     current_world: Optional[str] = None
     current_route_no: Optional[int] = None
     current_node_type: str = "unknown"
+    current_is_boss_node: bool = False
     current_deck_id: Optional[int] = None
     current_fleet: dict[str, Any] = field(default_factory=dict)
     battle_progress: str = "-"
@@ -156,6 +158,8 @@ class RuntimeContext:
     battle_result_confirm_clicked: bool = False
     drop_check_clicked: bool = False
     scene_ready_cache: dict[str, AgentEvent] = field(default_factory=dict)
+    latest_scene: Optional[dict[str, Any]] = None
+    action_history: set[str] = field(default_factory=set)
     user_paused: bool = False
 
 
@@ -202,6 +206,52 @@ def analyze_damage_from_fleet(fleet: dict[str, Any]) -> dict[str, Any]:
 
 def has_drop(drop: dict[str, Any]) -> bool:
     return any(drop.get(key) for key in ("ship_id", "item", "event_item"))
+
+
+def load_action_policy(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        logger.warning("action policy not found: %s", path)
+        return {}
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def target_visible(scene: dict[str, Any], target: str) -> bool:
+    targets = scene.get("targets") or {}
+    info = targets.get(target)
+    return isinstance(info, dict) and bool(info.get("visible", True))
+
+
+class MainDecisionStateMachine:
+    """Combine battle state, scene state, and policy config into an action."""
+
+    def __init__(self, action_policy: dict[str, Any]) -> None:
+        self.action_policy = action_policy
+
+    def action_to_target(self, action: str) -> Optional[str]:
+        return (self.action_policy.get("button_targets") or {}).get(action)
+
+    def decide(self, ctx: RuntimeContext) -> tuple[Optional[str], Optional[str]]:
+        scene = ctx.latest_scene or {}
+        scene_name = scene.get("scene")
+        battle = (ctx.last_battle_result or {}).get("battle") or {}
+        damage = (ctx.last_battle_result or {}).get("damage") or {}
+
+        scene_actions = self.action_policy.get("scene_actions") or {}
+        if scene_name in scene_actions:
+            action = scene_actions[scene_name]
+            return action, self.action_to_target(action)
+
+        is_boss = bool(battle.get("boss")) or ctx.current_is_boss_node or ctx.current_node_type == "boss_battle"
+        if scene_name == "night_battle_choice" and is_boss and self.action_policy.get("戰鬥類型:王點") == "進夜戰":
+            action = "進夜戰"
+            return action, self.action_to_target(action)
+
+        if scene_name == "advance_or_retreat" and damage.get("has_taiha") and self.action_policy.get("大破") == "撤退":
+            action = "撤退"
+            return action, self.action_to_target(action)
+
+        return None, None
 
 
 def classify_node(body: dict[str, Any]) -> tuple[str, bool, bool]:
@@ -313,9 +363,9 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
         source_kind = "map_start" if path == "/kcsapi/api_req_map/start" else "map_next"
         next_scenes = []
         if to_int(body.get("api_rashin_flg")) == 1:
-            next_scenes.append({"scene": "compass_or_map_production", "required_targets": [], "timeout_ms": 8000})
+            next_scenes.append({"scene": "compass_or_map_production", "timeout_ms": 8000})
         if is_battle:
-            next_scenes.append({"scene": "formation_select", "required_targets": ["formation_buttons"], "timeout_ms": 10000})
+            next_scenes.append({"scene": "formation_select", "timeout_ms": 10000})
         payload = {
             "schema": "kc.agent.battle_event.v1",
             "event_type": "map_node_arrived",
@@ -368,7 +418,7 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
         can_night = to_int(body.get("api_midnight_flag")) == 1
         next_scenes = []
         if can_night:
-            next_scenes.append({"scene": "night_battle_choice", "required_targets": ["night_battle_button", "no_night_battle_button"], "timeout_ms": 10000})
+            next_scenes.append({"scene": "night_battle_choice", "timeout_ms": 10000})
         payload = {
             "schema": "kc.agent.battle_event.v1",
             "event_type": "day_battle_received",
@@ -420,12 +470,11 @@ def normalize_poi_raw_event(raw: dict[str, Any]) -> Optional[AgentEvent]:
             if iid in hp_by_iid:
                 ship.update(hp_by_iid[iid])
         damage = analyze_damage_from_fleet(fleet)
-        required_targets = ["retreat_button"] if damage["has_taiha"] else ["advance_button", "retreat_button"]
         drop = {"ship_id": result.get("drop_ship_id") or result.get("dropShipId"), "item": result.get("drop_item") or result.get("dropItem"), "event_item": result.get("event_item") or result.get("eventItem")}
-        next_scenes = [{"scene": "battle_result_confirm", "required_targets": ["result_confirm_button"], "timeout_ms": 8000}]
+        next_scenes = [{"scene": "battle_result_confirm", "timeout_ms": 8000}]
         if has_drop(drop):
-            next_scenes.append({"scene": "drop_check", "required_targets": ["drop_confirm_button"], "timeout_ms": 10000})
-        next_scenes.append({"scene": "advance_or_retreat", "required_targets": required_targets, "timeout_ms": 10000})
+            next_scenes.append({"scene": "drop_check", "timeout_ms": 10000})
+        next_scenes.append({"scene": "advance_or_retreat", "timeout_ms": 10000})
         payload = {
             "schema": "kc.agent.battle_event.v1",
             "event_type": "battle_result",
@@ -451,12 +500,15 @@ class KcAgent:
         scene_wait_q: asyncio.Queue[WaitSpec],
         command_q: asyncio.Queue[Command],
         status_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+        action_policy: Optional[dict[str, Any]] = None,
     ) -> None:
         self.event_q = event_q
         self.scene_wait_q = scene_wait_q
         self.command_q = command_q
         self.ctx = RuntimeContext()
         self.status_sink = status_sink
+        self.action_policy = action_policy or {}
+        self.decision_sm = MainDecisionStateMachine(self.action_policy)
 
     async def run(self) -> None:
         logger.info("main loop started")
@@ -491,6 +543,7 @@ class KcAgent:
             "fleet_state_updated": self.on_fleet_state_updated,
             "battle_result": self.on_battle_result,
             "scene_ready": self.on_scene_ready,
+            "scene_analyzed": self.on_scene_analyzed,
             "scene_timeout": self.on_scene_timeout,
             "action_result": self.on_action_result,
             "user_interrupt": self.on_user_interrupt,
@@ -507,6 +560,7 @@ class KcAgent:
             "world": self.ctx.current_world or "-",
             "route_no": self.ctx.current_route_no,
             "node_type": self.ctx.current_node_type,
+            "is_boss_node": self.ctx.current_is_boss_node,
             "deck_id": self.ctx.current_deck_id,
             "fleet": self.ctx.current_fleet,
             "last_event_type": self.ctx.last_event_type,
@@ -518,6 +572,7 @@ class KcAgent:
             "pending_command_reason": self.ctx.pending_command_reason or "-",
             "taiha_latch": self.ctx.taiha_latch,
             "taiha_ships": self.ctx.taiha_ships,
+            "latest_scene": self.ctx.latest_scene or {},
             "updated_at_ms": now_ms(),
         }
 
@@ -536,6 +591,7 @@ class KcAgent:
         self.ctx.battle_id = None
         self.ctx.map_node_id = None
         self.ctx.current_world = map_info.get("world")
+        self.ctx.current_is_boss_node = False
         self.ctx.current_deck_id = to_int(fleet.get("deck_id"), 1)
         self.ctx.current_fleet = fleet
         self.ctx.battle_progress = "-"
@@ -551,6 +607,8 @@ class KcAgent:
         self.ctx.battle_result_confirm_clicked = False
         self.ctx.drop_check_clicked = False
         self.ctx.scene_ready_cache.clear()
+        self.ctx.action_history.clear()
+        self.ctx.latest_scene = None
         self.ctx.state = AgentState.SORTIE_STARTING
         logger.info(
             "sortie requested: sortie_id=%s world=%s deck=%s",
@@ -566,6 +624,7 @@ class KcAgent:
         self.ctx.current_world = map_info.get("world") or self.ctx.current_world
         self.ctx.current_route_no = to_int(map_info.get("route_no"))
         self.ctx.current_node_type = map_info.get("node_type", "unknown")
+        self.ctx.current_is_boss_node = bool(map_info.get("is_boss_node"))
         self.ctx.current_fleet = event.payload.get("fleet") or self.ctx.current_fleet
         self.ctx.battle_progress = "-"
         self.ctx.map_node_id = f"{self.ctx.current_world}-route-{self.ctx.current_route_no}"
@@ -578,9 +637,9 @@ class KcAgent:
             map_info.get("rashin_id"),
         )
         if next_scenes:
-            first = next_scenes[0]
-            await self.request_scene_wait(first["scene"], first.get("required_targets", []), first.get("timeout_ms", 8000), expected.get("ui_wait_reason", "map_node_arrived"), event.event_id, {"sortie_id": self.ctx.sortie_id, "map_node_id": self.ctx.map_node_id, "next_scenes": next_scenes, "next_scene_index": 0})
-            self.ctx.state = AgentState.WAIT_FORMATION if first["scene"] == "formation_select" else AgentState.WAIT_COMPASS_OR_PRODUCTION
+            first_scene = (next_scenes[0] or {}).get("scene")
+            self.ctx.pending_scene = first_scene
+            self.ctx.state = AgentState.WAIT_FORMATION if first_scene == "formation_select" else AgentState.WAIT_COMPASS_OR_PRODUCTION
         else:
             logger.info("no expected scene; waiting for further POI event")
 
@@ -602,8 +661,7 @@ class KcAgent:
         if can_night:
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
             self.ctx.battle_progress = "wait_night_choice"
-            scene = (expected.get("next_scenes") or [{}])[0]
-            await self.request_scene_wait(scene.get("scene", "night_battle_choice"), scene.get("required_targets", ["night_battle_button", "no_night_battle_button"]), scene.get("timeout_ms", 10000), "can_night_battle", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id})
+            self.ctx.pending_scene = "night_battle_choice"
         else:
             self.ctx.state = AgentState.WAIT_BATTLE_RESULT
             logger.info("no night choice expected; wait for battle_result")
@@ -640,16 +698,8 @@ class KcAgent:
             battle.get("boss"),
             self.ctx.taiha_latch,
         )
-        scenes = expected.get("next_scenes") or []
-        if scenes:
-            first = scenes[0]
-            scene_name = first.get("scene", "battle_result_confirm")
-            # wait here for scene
-            await self.request_scene_wait(scene_name, first.get("required_targets", ["result_confirm_button"]), first.get("timeout_ms", 8000), "battle_result_received", event.event_id, {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "battle_event_id": event.event_id, "next_scenes": scenes, "next_scene_index": 0})
-            cached_scene = self.ctx.scene_ready_cache.get(scene_name)
-            if cached_scene is not None and self.is_fresh_scene(cached_scene, event.ts_ms):
-                # wait here for click
-                await self.try_click_battle_result_confirm(cached_scene)
+        self.ctx.pending_scene = "battle_result_confirm"
+        await self.evaluate_policy()
 
     async def on_scene_ready(self, event: AgentEvent) -> None:
         p = event.payload
@@ -666,28 +716,57 @@ class KcAgent:
         if wait_id and wait_id == self.ctx.pending_wait_id:
             self.ctx.pending_wait_id = None
             self.ctx.pending_scene = None
-        if scene == "battle_result_confirm":
-            await self.try_click_battle_result_confirm(event)
-        elif scene == "drop_check":
-            await self.try_click_drop_check(event)
-        elif scene == "advance_or_retreat":
-            await self.try_click_advance_or_retreat(event)
-        elif scene == "formation_select":
+        self.ctx.latest_scene = p
+        if scene == "formation_select":
             self.ctx.state = AgentState.WAIT_FORMATION
             logger.info("user input required: select formation")
         elif scene == "night_battle_choice":
             self.ctx.state = AgentState.WAIT_NIGHT_CHOICE
             self.ctx.battle_progress = "wait_night_choice"
             logger.info("user input required: choose night battle or no night battle")
-        else:
-            logger.warning("scene ready but no action defined: %s", scene)
+        await self.evaluate_policy()
 
-    def scene_target_visible(self, event: AgentEvent, target: str) -> bool:
-        targets = (event.payload or {}).get("targets") or {}
-        target_info = targets.get(target)
-        if not isinstance(target_info, dict):
-            return False
-        return bool(target_info.get("visible", True))
+    async def on_scene_analyzed(self, event: AgentEvent) -> None:
+        scene = event.payload.get("scene")
+        if not scene:
+            logger.warning("scene_analyzed ignored: missing scene payload=%s", event.payload)
+            return
+        self.ctx.latest_scene = event.payload
+        self.ctx.scene_ready_cache[scene] = AgentEvent("scene_ready", event.payload, event.event_id, event.ts_ms, event.source, event.correlation)
+        logger.info("scene analyzed: scene=%s targets=%s", scene, list((event.payload.get("targets") or {}).keys()))
+        await self.evaluate_policy()
+
+    def action_to_target(self, action: str) -> Optional[str]:
+        return self.decision_sm.action_to_target(action)
+
+    async def evaluate_policy(self) -> None:
+        scene = self.ctx.latest_scene or {}
+        scene_name = scene.get("scene")
+        if not scene_name:
+            return
+        if self.ctx.pending_command_id:
+            return
+        action, target = self.decision_sm.decide(self.ctx)
+        if not action:
+            return
+        if not target:
+            logger.warning("policy action has no target mapping: %s", action)
+            return
+        action_key = f"{self.ctx.last_battle_result_event_id or self.ctx.last_event_id}:{scene_name}:{target}"
+        if action_key in self.ctx.action_history:
+            return
+        if not target_visible(scene, target):
+            logger.info("policy matched action=%s, but target=%s is not visible in scene=%s", action, target, scene_name)
+            return
+        self.ctx.action_history.add(action_key)
+        await self.command_click(
+            target,
+            f"policy:{action}",
+            self.ctx.last_battle_result_event_id or self.ctx.last_event_id,
+            scene.get("wait_id"),
+            scene_name,
+            {"policy_action": action, "scene": scene_name},
+        )
 
     def is_fresh_scene(self, event: AgentEvent, reference_ts_ms: Optional[int] = None) -> bool:
         reference = reference_ts_ms or now_ms()
@@ -696,132 +775,6 @@ class KcAgent:
     def clear_action_scene_cache(self) -> None:
         for scene in ("battle_result_confirm", "drop_check", "advance_or_retreat"):
             self.ctx.scene_ready_cache.pop(scene, None)
-
-    def next_battle_result_scene_after(self, scene_name: str) -> Optional[dict[str, Any]]:
-        scenes = ((self.ctx.last_battle_result or {}).get("expected") or {}).get("next_scenes") or []
-        for idx, scene in enumerate(scenes):
-            if scene.get("scene") == scene_name and idx + 1 < len(scenes):
-                return scenes[idx + 1]
-        return None
-
-    async def request_next_battle_result_scene(self, after_scene: str, trigger_event_id: Optional[str]) -> bool:
-        next_scene = self.next_battle_result_scene_after(after_scene)
-        if not next_scene:
-            return False
-        scene_name = next_scene.get("scene")
-        if not scene_name:
-            return False
-        await self.request_scene_wait(
-            scene_name,
-            next_scene.get("required_targets", []),
-            next_scene.get("timeout_ms", 8000),
-            f"after_{after_scene}",
-            trigger_event_id,
-            {"sortie_id": self.ctx.sortie_id, "battle_id": self.ctx.battle_id, "battle_event_id": self.ctx.last_battle_result_event_id},
-        )
-        if scene_name == "advance_or_retreat":
-            self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
-        cached_scene = self.ctx.scene_ready_cache.get(scene_name)
-        if cached_scene is not None and self.is_fresh_scene(cached_scene):
-            if scene_name == "drop_check":
-                await self.try_click_drop_check(cached_scene)
-            elif scene_name == "advance_or_retreat":
-                await self.try_click_advance_or_retreat(cached_scene)
-        return True
-
-    async def try_click_battle_result_confirm(self, scene_event: AgentEvent) -> None:
-        scene = (scene_event.payload or {}).get("scene")
-        wait_id = (scene_event.payload or {}).get("wait_id")
-        if scene != "battle_result_confirm":
-            return
-        if not self.is_fresh_scene(scene_event):
-            logger.info("battle_result_confirm scene ignored because cached scene is too old")
-            return
-        if self.ctx.last_battle_result is None:
-            logger.info("battle_result_confirm scene ready, but no battle_result event has been accepted yet")
-            return
-        if self.ctx.battle_result_confirm_clicked or self.ctx.pending_command_id:
-            logger.info("battle_result_confirm click already pending/executed")
-            return
-        if not self.scene_target_visible(scene_event, "result_confirm_button"):
-            logger.info("battle_result_confirm scene ready, but result_confirm_button is not visible")
-            return
-        await self.command_click(
-            "result_confirm_button",
-            "confirm_battle_result",
-            self.ctx.last_battle_result_event_id,
-            wait_id,
-            scene,
-            {"requires_battle_event": "battle_result", "requires_scene_target": "result_confirm_button"},
-        )
-        self.ctx.scene_ready_cache.pop("battle_result_confirm", None)
-        self.ctx.battle_result_confirm_clicked = True
-        self.ctx.state = AgentState.WAIT_ACTION_RESULT
-
-    async def try_click_drop_check(self, scene_event: AgentEvent) -> None:
-        scene = (scene_event.payload or {}).get("scene")
-        wait_id = (scene_event.payload or {}).get("wait_id")
-        if scene != "drop_check":
-            return
-        if not self.is_fresh_scene(scene_event):
-            logger.info("drop_check scene ignored because cached scene is too old")
-            return
-        if self.ctx.last_battle_result is None:
-            logger.info("drop_check scene ready, but no battle_result event has been accepted yet")
-            return
-        drop = ((self.ctx.last_battle_result.get("battle") or {}).get("drop") or {})
-        if not has_drop(drop):
-            logger.info("drop_check scene ready, but last battle_result has no drop")
-            return
-        if self.ctx.drop_check_clicked or self.ctx.pending_command_id:
-            logger.info("drop_check click already pending/executed")
-            return
-        if not self.scene_target_visible(scene_event, "drop_confirm_button"):
-            logger.info("drop_check scene ready, but drop_confirm_button is not visible")
-            return
-        await self.command_click(
-            "drop_confirm_button",
-            "confirm_drop",
-            self.ctx.last_battle_result_event_id,
-            wait_id,
-            scene,
-            {"requires_battle_event": "battle_result", "requires_scene_target": "drop_confirm_button", "drop": drop},
-        )
-        self.ctx.scene_ready_cache.pop("drop_check", None)
-        self.ctx.drop_check_clicked = True
-        self.ctx.state = AgentState.WAIT_ACTION_RESULT
-
-    async def try_click_advance_or_retreat(self, scene_event: AgentEvent) -> None:
-        scene = (scene_event.payload or {}).get("scene")
-        wait_id = (scene_event.payload or {}).get("wait_id")
-        if scene != "advance_or_retreat":
-            return
-        if not self.is_fresh_scene(scene_event):
-            logger.info("advance_or_retreat scene ignored because cached scene is too old")
-            return
-        if self.ctx.last_battle_result is None:
-            logger.info("advance_or_retreat scene ready, but no battle_result event has been accepted yet")
-            return
-        if self.ctx.taiha_latch:
-            if self.ctx.pending_command_id:
-                logger.info("retreat click already pending")
-                return
-            if not self.scene_target_visible(scene_event, "retreat_button"):
-                logger.info("advance_or_retreat scene ready, but retreat_button is not visible")
-                return
-            await self.command_click(
-                "retreat_button",
-                "taiha_detected",
-                self.ctx.last_battle_result_event_id,
-                wait_id,
-                scene,
-                {"taiha_latch": True, "forbid_target": "advance_button", "requires_battle_event": "battle_result", "requires_scene_target": "retreat_button"},
-            )
-            self.ctx.scene_ready_cache.pop("advance_or_retreat", None)
-            self.ctx.state = AgentState.WAIT_ACTION_RESULT
-        else:
-            self.ctx.state = AgentState.WAIT_ADVANCE_OR_RETREAT
-            logger.info("user input required: choose advance or retreat")
 
     async def on_scene_timeout(self, event: AgentEvent) -> None:
         logger.error("scene timeout: %s", event.payload)
@@ -845,11 +798,14 @@ class KcAgent:
         self.ctx.pending_command_reason = None
         if p.get("status") == "executed":
             if command_target == "result_confirm_button" and self.ctx.last_battle_result:
-                if await self.request_next_battle_result_scene("battle_result_confirm", event.event_id):
-                    return
+                drop = ((self.ctx.last_battle_result.get("battle") or {}).get("drop") or {})
+                self.ctx.pending_scene = "drop_check" if has_drop(drop) else "advance_or_retreat"
+                logger.info("result confirmed; waiting for scene=%s from continuous scene checker", self.ctx.pending_scene)
+                return
             if command_target == "drop_confirm_button" and self.ctx.last_battle_result:
-                if await self.request_next_battle_result_scene("drop_check", event.event_id):
-                    return
+                self.ctx.pending_scene = "advance_or_retreat"
+                logger.info("drop confirmed; waiting for scene=%s from continuous scene checker", self.ctx.pending_scene)
+                return
             logger.info("action executed; waiting for POI confirmation")
         elif p.get("status") in ("rejected", "failed"):
             self.ctx.state = AgentState.ERROR
@@ -945,6 +901,13 @@ async def mouse_executor_stub(command_q: asyncio.Queue[Command], event_q: asynci
             command_q.task_done()
 
 
+async def external_event_bridge(external_event_q: Queue[AgentEvent], event_q: asyncio.Queue[AgentEvent]) -> None:
+    loop = asyncio.get_running_loop()
+    while True:
+        event = await loop.run_in_executor(None, external_event_q.get)
+        await event_q.put(event)
+
+
 def run_gui(args: argparse.Namespace) -> int:
     from PySide6.QtCore import Qt, QTimer
     from PySide6.QtGui import QImage, QPixmap
@@ -964,13 +927,14 @@ def run_gui(args: argparse.Namespace) -> int:
     from key_identify.idc_find_feature import capture_window_by_title
 
     status_q: Queue[dict[str, Any]] = Queue()
+    external_event_q: Queue[AgentEvent] = Queue()
 
     def status_sink(snapshot: dict[str, Any]) -> None:
         status_q.put(snapshot)
 
     def run_agent_thread() -> None:
         try:
-            asyncio.run(async_main(args, status_sink=status_sink))
+            asyncio.run(async_main(args, status_sink=status_sink, external_event_q=external_event_q))
         except Exception as exc:
             status_q.put({
                 "state": "ERROR",
@@ -990,6 +954,9 @@ def run_gui(args: argparse.Namespace) -> int:
             self.setWindowTitle("KC Agent Dashboard")
             self.resize(1180, 820)
             self.latest_snapshot: dict[str, Any] = {}
+            self.scene_classifier = None
+            self.scene_metadata = self.load_scene_metadata()
+            self.scene_labels = [scene.get("name") for scene in self.scene_metadata.values() if scene.get("name")]
 
             root = QWidget()
             self.setCentralWidget(root)
@@ -1136,9 +1103,106 @@ def run_gui(args: argparse.Namespace) -> int:
                 )
                 self.screen_label.setPixmap(pixmap)
                 self.screen_status.setText(f"{window.title}  {width}x{height}")
+                self.analyze_scene(bgr)
             except Exception as exc:
                 self.screen_label.setText("POI window not found or screenshot failed")
                 self.screen_status.setText(str(exc))
+
+        def load_scene_metadata(self) -> dict[str, Any]:
+            path = Path(args.scene_metadata)
+            if not path.exists():
+                return {}
+            with path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+
+        def get_scene_classifier(self):
+            if self.scene_classifier is not None:
+                return self.scene_classifier
+            from scene_identify.si_progress_classify import LocalCLIPClassifier
+            self.scene_classifier = LocalCLIPClassifier(
+                model_ref=args.scene_model_ref,
+                cache_dir=args.scene_model_cache,
+                device=args.scene_device,
+            )
+            return self.scene_classifier
+
+        def canonical_scene_name(self, label: str) -> str:
+            mapping = {
+                "night_battle": "night_battle_choice",
+                "battle_result": "battle_result_confirm",
+                "fleet_condition": "drop_check",
+                "next_node": "advance_or_retreat",
+            }
+            return mapping.get(label, label)
+
+        def analyze_scene(self, bgr: Any) -> None:
+            if not self.scene_labels:
+                return
+            try:
+                from PIL import Image
+                classifier = self.get_scene_classifier()
+                tmp_path = Path(args.scene_screenshot_path)
+                tmp_path.parent.mkdir(parents=True, exist_ok=True)
+                rgb = bgr[:, :, ::-1]
+                Image.fromarray(rgb).save(tmp_path)
+                result = classifier.classify(
+                    str(tmp_path),
+                    self.scene_labels,
+                    text_template="a game screenshot of {}",
+                    top_k=3,
+                )
+                raw_scene = result["best_label"]
+                scene_name = self.canonical_scene_name(raw_scene)
+                targets = self.find_scene_targets(raw_scene, bgr)
+                external_event_q.put(AgentEvent(
+                    "scene_analyzed",
+                    {
+                        "scene": scene_name,
+                        "raw_scene": raw_scene,
+                        "scores": result.get("scores") or [],
+                        "targets": targets,
+                    },
+                    source="gui_scene_checker",
+                ))
+            except Exception as exc:
+                self.screen_status.setText(f"scene analyze failed: {exc}")
+
+        def find_scene_targets(self, raw_scene: str, bgr: Any) -> dict[str, Any]:
+            from key_identify.idc_find_feature import FeatureMatcher
+            scene_meta = next((scene for scene in self.scene_metadata.values() if scene.get("name") == raw_scene), {})
+            buttons = scene_meta.get("buttons") or {}
+            targets: dict[str, Any] = {}
+            target_names = {
+                "enter_night_battle": "night_battle_button",
+                "skip_night_battle": "no_night_battle_button",
+                "next": "result_confirm_button" if raw_scene == "battle_result" else "drop_confirm_button",
+                "advance": "advance_button",
+                "retreat": "retreat_button",
+            }
+            for button_name, button_meta in buttons.items():
+                key_file = button_meta.get("key_file")
+                if not key_file:
+                    continue
+                key_path = Path(key_file)
+                if not key_path.is_absolute():
+                    key_path = Path.cwd() / key_path
+                if not key_path.exists():
+                    continue
+                target_name = target_names.get(button_name, button_name)
+                try:
+                    matcher = FeatureMatcher(args.poi_window_title, key_path)
+                    match = matcher.match_template_tm(scene_bgr=bgr, threshold=args.key_match_threshold)
+                    if match.found:
+                        targets[target_name] = {
+                            "visible": True,
+                            "confidence": match.score,
+                            "bbox": list(match.bbox_screen_xywh),
+                            "button": button_name,
+                            "key_file": str(key_path),
+                        }
+                except Exception as exc:
+                    targets[target_name] = {"visible": False, "error": repr(exc), "button": button_name}
+            return targets
 
     thread = threading.Thread(target=run_agent_thread, name="kc_agent_gui_loop", daemon=True)
     thread.start()
@@ -1190,11 +1254,21 @@ def start_battle_receiver(
     return server, thread
 
 
-async def async_main(args: argparse.Namespace, status_sink: Optional[Callable[[dict[str, Any]], None]] = None) -> None:
+async def async_main(
+    args: argparse.Namespace,
+    status_sink: Optional[Callable[[dict[str, Any]], None]] = None,
+    external_event_q: Optional[Queue[AgentEvent]] = None,
+) -> None:
     event_q: asyncio.Queue[AgentEvent] = asyncio.Queue(maxsize=args.event_queue_size)
     scene_wait_q: asyncio.Queue[WaitSpec] = asyncio.Queue(maxsize=args.scene_queue_size)
     command_q: asyncio.Queue[Command] = asyncio.Queue(maxsize=args.command_queue_size)
-    agent = KcAgent(event_q, scene_wait_q, command_q, status_sink=status_sink)
+    agent = KcAgent(
+        event_q,
+        scene_wait_q,
+        command_q,
+        status_sink=status_sink,
+        action_policy=load_action_policy(args.action_policy),
+    )
     loop = asyncio.get_running_loop()
     receiver_server: Optional[HTTPServer] = None
     receiver_thread: Optional[threading.Thread] = None
@@ -1207,6 +1281,8 @@ async def async_main(args: argparse.Namespace, status_sink: Optional[Callable[[d
         asyncio.create_task(scene_waiter_stub(scene_wait_q, event_q, auto_ready=args.auto_scene_ready), name="scene_waiter_stub"),
         asyncio.create_task(mouse_executor_stub(command_q, event_q, auto_execute=args.auto_mouse_execute), name="mouse_executor_stub"),
     ]
+    if external_event_q is not None:
+        tasks.append(asyncio.create_task(external_event_bridge(external_event_q, event_q), name="external_event_bridge"))
     try:
         await asyncio.gather(*tasks)
     finally:
@@ -1225,6 +1301,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--poi-window-title", default="poi", help="Window title substring for POI screenshot capture.")
     parser.add_argument("--gui-refresh-ms", type=int, default=250, help="Dashboard state refresh interval.")
     parser.add_argument("--screenshot-refresh-ms", type=int, default=1000, help="POI screenshot refresh interval.")
+    parser.add_argument("--action-policy", type=Path, default=DEFAULT_ACTION_POLICY_PATH, help="JSON policy file for main action decisions.")
+    parser.add_argument("--scene-metadata", type=Path, default=Path("utility/scene_metadata.json"))
+    parser.add_argument("--scene-model-ref", default="./scene_identify/models/models--openai--clip-vit-base-patch32/snapshots/3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+    parser.add_argument("--scene-model-cache", default="./scene_identify/models")
+    parser.add_argument("--scene-device", default="cpu")
+    parser.add_argument("--scene-screenshot-path", type=Path, default=Path("C:/tmp/kc_agent_scene.png"))
+    parser.add_argument("--key-match-threshold", type=float, default=0.8)
     parser.add_argument("--event-queue-size", type=int, default=100)
     parser.add_argument("--scene-queue-size", type=int, default=20)
     parser.add_argument("--command-queue-size", type=int, default=20)
