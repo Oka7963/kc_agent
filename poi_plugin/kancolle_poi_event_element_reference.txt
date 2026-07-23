@@ -1,0 +1,314 @@
+KanColle / poi battle-event element reference
+Generated for Codex-readable use.
+
+Scope:
+- Based on the user's poi battle-event log fields discussed in this conversation.
+- Extended with known fixed/macro-like values from public KanColle API notes and poi plugin API docs.
+- Values marked "known/common" are not guaranteed to be exhaustive for future event maps or new mechanics.
+- For final battle result, prefer poi @@BattleResult over raw battleresult response.
+
+Legend:
+- "observed" = seen in the supplied test log / plugin payload shape discussed here.
+- "known/common" = public API/community reference value.
+- "variable" = not a fixed enum; treat as data.
+- "unknown/reserved" = value exists in logs/community notes but exact semantics are not stable or not verified.
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| event | string | Exporter-generated event name. This is not a native KanColle API field; it is the plugin's classification result. | map_start_request, map_start_response, map_next_request, map_next_response, sortie_battle_request, sortie_battle_response, sortie_air_battle_request, sortie_air_battle_response, sortie_ld_shooting_request, sortie_ld_shooting_response, night_to_day_request, night_to_day_response, midnight_battle_request, midnight_battle_response, combined_battle_request, combined_battle_response, combined_air_battle_request, combined_air_battle_response, combined_each_battle_request, combined_each_battle_response, combined_battle_water_request, combined_battle_water_response, combined_midnight_battle_request, combined_midnight_battle_response, combined_battle_result_request, combined_battle_result_response, practice_battle_request, practice_battle_response, practice_midnight_battle_request, practice_midnight_battle_response, practice_battle_result_request, practice_battle_result_response, ship2_update_response, ship3_update_response, deck_update_response, battle_result, day_battle_hp_update, night_battle_prompt_expected, night_battle_selected |
+| phase | string | Exporter-generated event phase. | request, response, poi_battle_result, derived |
+| source | string | Where the event was captured from. | game.request, game.response, game.response+poi-lib-battle, @@BattleResult |
+| method | string or null | HTTP method reported by poi game event. | GET, POST, null |
+| path | string or null | kcsapi endpoint. Null for @@BattleResult if exported as normalized result only. | /kcsapi/api_req_map/start, /kcsapi/api_req_map/next, /kcsapi/api_req_sortie/battle, /kcsapi/api_req_sortie/airbattle, /kcsapi/api_req_sortie/ld_airbattle, /kcsapi/api_req_sortie/ld_shooting, /kcsapi/api_req_sortie/night_to_day, /kcsapi/api_req_sortie/battleresult, /kcsapi/api_req_battle_midnight/battle, /kcsapi/api_req_battle_midnight/sp_midnight, /kcsapi/api_req_combined_battle/*, /kcsapi/api_req_practice/*, /kcsapi/api_get_member/ship2, /kcsapi/api_get_member/ship3, /kcsapi/api_get_member/deck, null |
+| request_body | object or null | Request parameters after api_token removal. For response events, copied from postBody if available. | object, null |
+| response_body | object or null | Raw/sanitized response body from game.response. In this project, it may already be api_data itself rather than {api_result, api_data}. | object, null |
+| response_summary | object or null | Exporter-generated response summary. | object, null |
+| battle_result | object or null | Normalized poi @@BattleResult summary. | object, null |
+| fleet_snapshot | array<object> | Exporter snapshot from poi store.info.fleets + store.info.ships. | array of fleet objects |
+| sortie_snapshot | object | Exporter snapshot from poi store.sortie. | {combined_flag:number, sortie_status:array<boolean>, escaped_pos:array<number>} |
+| seq | integer | Exporter-generated monotonic sequence number. | 1, 2, 3, ... |
+| exported_at | integer | Export timestamp in Unix milliseconds. | variable |
+
+Map movement / node fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_verno | string | API version in request body. | "1" commonly observed |
+| api_maparea_id | string in request; integer in response | Map area/world ID. | 1, 2, 3, 4, 5, 6, 7, event-area IDs; request often string |
+| api_mapinfo_no | string in request; integer in response | Map number inside area. | 1, 2, 3, 4, 5, 6, etc.; request often string |
+| api_deck_id | string in request; integer in response | Fleet/deck ID. | 1, 2, 3, 4; request often string |
+| api_serial_cid | string | Client/generated serial ID in map start request. | variable numeric string |
+| api_cell_data | array<object> | Map-cell reveal/progress data. | array of {api_id, api_no, api_color_no, api_passed} |
+| api_cell_data[].api_id | integer | Internal mapcell ID. | variable |
+| api_cell_data[].api_no | integer | Route node number shown/used by API. | 0, 1, 2, 3, ... |
+| api_cell_data[].api_color_no | integer | Map cell/node color/type from master mapcell. | See api_color_no enum below |
+| api_cell_data[].api_passed | integer | Whether cell is already passed/known in current sortie display state. | 0=not passed/not revealed, 1=passed/revealed |
+| api_rashin_flg | integer | Whether compass/routing animation is shown. | 0=no compass, 1=show compass |
+| api_rashin_id | integer | Compass fairy/animation ID. | 0=none, 1=sleepy fairy, 2=peach-hair-ornament fairy, 3=chick, 4=witch; values are old/community-described and may be cosmetic |
+| api_no | integer | Current/next route node number. For poi @@BattleResult.mapCell this corresponds to route number, not necessarily visual cell ID. | 0, 1, 2, 3, ... |
+| api_color_no | integer | Node color/type. Use with api_event_id/api_event_kind; do not rely on this alone. | 0=start/none/unknown, 2=resource, 3=maelstrom, 4=battle node, 5=boss, 6=nothing-happened, 7=carrier/aerial battle type, 8=port/home, 9=air recon; other values unknown/reserved |
+| api_event_id | integer | Node event category. Decode it together with api_event_kind rather than as a standalone enum. | known/common: 0=start/none, 1=battle avoided, 2=resource obtained, 3=resource lost/maelstrom, 4=battle, 5=boss battle, 6=no-event/special node, 7=aerial event, 8=escort success, 9=transport munitions, 10=long-distance aerial/special node |
+| api_event_kind | integer | Context-dependent subtype; the same number can mean different things for different api_event_id values. | known combinations: (event_id=4, kind=1)=normal day battle, (4,2)=night battle, (4,3)=night-to-day, (4,4)=aerial battle, (4,5)=enemy combined fleet, (4,6)=long-distance aerial battle, (6,1)=battle avoided/no enemy sighted, (6,2)=manual route selection, (7,0)=aerial reconnaissance, (10,0)=anchorage repair |
+| api_next | integer | Route continuation/branch count. | 0=dead end/no next node, 1 or greater=can continue/branch count; exact meaning can vary |
+| api_bosscell_no | integer | Boss route node number. | variable; often positive route number |
+| api_bosscomp | integer | Boss-related composition/status flag. Exact semantics are not defined by the current public type source; do not use it alone to decide whether the fleet is currently at the boss node. | 0, 1 observed; exact semantics uncertain |
+| api_comment_kind | integer | Map comment kind. | 0=none, 1="enemy fleet found", 2="attack target found" (old/community note; verify per map) |
+| api_production_kind | integer | Map production animation kind. | 0=none, 1=scout plane launch / reconnaissance animation |
+| api_airsearch | object | Air search/recon info. | {api_plane_type:number, api_result:number} |
+| api_airsearch.api_plane_type | integer | Air-search plane type. | 0=none/unknown; other values mechanic-specific |
+| api_airsearch.api_result | integer | Air-search result. | 0=none/fail/unknown; other values mechanic-specific |
+| api_eventmap | object or absent | Event-map gauge state. This optional object is present on event maps/mechanics that expose a map HP gauge. | {api_max_maphp:number, api_now_maphp:number, api_dmg:number} |
+| api_eventmap.api_max_maphp | integer | Maximum event-map gauge HP. | 0 or positive integer |
+| api_eventmap.api_now_maphp | integer | Current remaining event-map gauge HP. | 0 or positive integer |
+| api_eventmap.api_dmg | integer | Gauge-damage-related value/flag returned for the current map movement. Its precise presentation semantics can vary by event mechanic. | observed 0 or 1; treat other values as extensible |
+| api_select_route | object or absent | Manual/active route-selection data. Presence normally indicates selectable destinations are being supplied. | {api_select_cells:array<integer>} |
+| api_select_route.api_select_cells | array<integer> | Destination route-node numbers offered by the manual route-selection screen. | e.g. [10,15] observed; values are map-specific api_no values |
+| api_e_deck_info | array<object> or null | Enemy-deck info included for battle nodes. Useful battle-node hint. | null, array of objects |
+| api_e_deck_info[].api_kind | integer | Enemy-deck kind. | 0 commonly observed; other values unknown/event-specific |
+| api_e_deck_info[].api_ship_ids | array<integer> | Enemy master ship IDs for upcoming node. | variable ship IDs |
+| api_limit_state | integer or absent | Optional sortie/map limit-state value. Public type definitions confirm the field but do not define a stable enum. | 0 commonly observed; preserve/log other values as unknown rather than assigning behavior |
+| api_from_no | integer | Previous route node number. | 0, 1, 2, ... |
+| api_itemget | object or null | Resource/item node reward info. | null, object with api_id/api_getcount/api_name/api_icon_id/api_usemst |
+| api_itemget.api_id | integer | Resource/item ID at node. | 1=fuel, 2=ammo, 3=steel, 4=bauxite, 11=medium furniture box, 12=large furniture box; other IDs possible |
+| api_itemget.api_getcount | integer | Amount gained. | 0 or positive integer |
+| api_itemget.api_icon_id | integer | Reward icon ID. | commonly same family as resource/item ID; 1=fuel, 2=ammo, 3=steel, 4=bauxite, 11/12=furniture boxes |
+| api_itemget.api_usemst | integer | Reward master category. | 4=resource, 11=medium furniture box, 12=large furniture box; other item categories possible |
+| api_happening | object or null | Maelstrom/happening node info. | null, object |
+| api_happening.api_type | integer | Happening type. | 1 commonly seen in old notes; exact semantics uncertain |
+| api_happening.api_count | integer | Amount lost. | 0 or positive integer |
+| api_happening.api_usemst | integer | Resource category. | 4=resource in old notes |
+| api_happening.api_mst_id | integer | Lost resource ID. | 1=fuel, 2=ammo, 3=steel, 4=bauxite |
+
+Battle request / selection fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_recovery_type | string/integer | Emergency repair/recovery setting in battle request. | 0=none commonly observed; other values unknown/repair-related |
+| api_formation | string in request | Player-selected formation sent before battle. | Single fleet: "1"=Line Ahead, "2"=Double Line, "3"=Diamond, "4"=Echelon, "5"=Line Abreast; Combined fleet: "11"=1st combined formation, "12"=2nd, "13"=3rd, "14"=4th; "6" may appear for special/unknown cases in some tools but verify before use |
+| api_btime | string | Battle-result request timing/check value. | variable numeric string |
+| api_l_value[n] | string | Battle-result request HP/check value array-like parameter from client. | numeric strings; variable |
+| api_l_value3[n] | string | Additional battle-result request value array-like parameter. | numeric strings; often "0" in test log |
+
+Battle response top-level fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_deck_id | integer | Player fleet/deck ID in battle response. | 1, 2, 3, 4 |
+| api_formation | array<integer> | Battle formation/engagement tuple. Usually [player formation, enemy formation, engagement]. | element[0]=player formation; element[1]=enemy formation; element[2]=engagement. Player/enemy formation: 1=Line Ahead, 2=Double Line, 3=Diamond, 4=Echelon, 5=Line Abreast, 11-14=combined formations. Engagement: 1=Parallel/T-crossing neutral, 2=Head-on, 3=Green T / T advantage, 4=Red T / T disadvantage |
+| api_f_nowhps | array<integer> | Friendly current HP array at battle start/phase. | array length usually 6 or 7; values >= -1 depending context |
+| api_f_maxhps | array<integer> | Friendly max HP array. | array of positive integers |
+| api_f_nowhps_combined | array<integer> or null | Escort/combined friendly current HP. | null or array |
+| api_f_maxhps_combined | array<integer> or null | Escort/combined friendly max HP. | null or array |
+| api_fParam | array<array<integer>> | Friendly battle parameter array. Usually [firepower, torpedo, anti-air, armor] per ship. | array of 4-int arrays |
+| api_ship_ke | array<integer> | Enemy master ship IDs. | variable ship IDs, -1 may indicate empty depending endpoint |
+| api_ship_ke_combined | array<integer> or null | Combined enemy fleet ship IDs. | null or array |
+| api_ship_lv | array<integer> | Enemy levels. | often 1+ |
+| api_e_nowhps | array<integer> | Enemy current HP array. | array of integers |
+| api_e_maxhps | array<integer> | Enemy max HP array. | array of positive integers |
+| api_e_nowhps_combined | array<integer> or null | Enemy combined current HP array. | null or array |
+| api_e_maxhps_combined | array<integer> or null | Enemy combined max HP array. | null or array |
+| api_eSlot | array<array<integer>> | Enemy equipment master IDs. | item IDs; -1=empty slot |
+| api_eParam | array<array<integer>> | Enemy battle parameter array. Usually [firepower, torpedo, anti-air, armor]. | array of 4-int arrays |
+| api_smoke_type | integer | Smoke screen state/type. | 0=not active; other values smoke-screen mechanic specific |
+| api_balloon_cell | integer | Balloon-related battle flag. | 0=not active/none; other values mechanic-specific |
+| api_atoll_cell | integer | Atoll/special mechanic flag. | 0=not active/none; other values mechanic-specific |
+| api_midnight_flag | integer | Whether the night-battle choice is available after day battle. This does not mean the player actually selected night battle. | 0=night battle unavailable/no prompt, 1=night-battle choice available |
+| api_search | array<integer> | Search/contact/scouting result pair. | commonly [1,1]; exact values vary; treat as mechanic-specific |
+| api_stage_flag | array<integer> | Air battle stages existence flags. | Each element 0=stage absent, 1=stage present; commonly length 3 for stage1/stage2/stage3 |
+| api_support_flag | integer | Support expedition/fleet attack type. | 0=none, 1=aerial support, 2=shelling support, 3=torpedo support, 4=ASW support? values beyond 3/4 vary by era/tooling; verify |
+| api_support_info | object or null | Support attack details. | null or object |
+| api_opening_taisen_flag | integer | Opening ASW phase flag. | 0=absent, 1=present |
+| api_opening_taisen | object or null | Opening ASW attack data. | null or object |
+| api_opening_flag | integer | Opening torpedo phase flag. | 0=absent, 1=present |
+| api_opening_atack | object or null | Opening torpedo data. Original API spelling is "atack". | null or object |
+| api_hourai_flag | array<integer> | Shelling/torpedo phases existence flags. | Usually 4 values; each 0=absent, 1=present. Typical order: hougeki1, hougeki2, hougeki3, raigeki |
+| api_hougeki1 | object or null | First shelling phase data. | null or object |
+| api_hougeki2 | object or null | Second shelling phase data. | null or object |
+| api_hougeki3 | object or null | Third shelling/special phase data. | null or object |
+| api_raigeki | object or null | Torpedo phase data. | null or object |
+
+Aerial combat fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_kouku | object or null | Aerial combat data. It may contain stage1, stage2, stage3, plane_from and other fields. | null or object |
+| api_kouku.api_plane_from | array | Plane source data. | array/null mixture; variable by battle |
+| api_kouku.api_stage1 | object or null | Stage 1: air superiority/fighter battle. | null or object |
+| api_stage1.api_f_count | integer | Friendly participating plane count. | 0 or positive integer |
+| api_stage1.api_f_lostcount | integer | Friendly planes lost. | 0 or positive integer |
+| api_stage1.api_e_count | integer | Enemy participating plane count. | 0 or positive integer |
+| api_stage1.api_e_lostcount | integer | Enemy planes lost. | 0 or positive integer |
+| api_stage1.api_disp_seiku | integer | Air state display / air superiority result. | 0=no display/none, 1=Air Supremacy, 2=Air Superiority, 3=Air Parity, 4=Air Denial/Disadvantage, 5=Air Incapability/Loss; naming varies by translation |
+| api_stage1.api_touch_plane | array<integer> | Contact plane IDs for each side. | -1=no contact; positive item/master ID=contact plane |
+| api_kouku.api_stage2 | object or null | Stage 2: anti-air defense/interception. | null or object |
+| api_kouku.api_stage3 | object or null | Stage 3: airstrike damage. | null or object |
+| api_stage3.api_frai_flag | array<integer> | Friendly-side torpedo/airstrike flag per target/slot. | 0=none, 1=present; exact meaning depends on side/stage |
+| api_stage3.api_erai_flag | array<integer> | Enemy-side torpedo/airstrike flag per target/slot. | 0=none, 1=present |
+| api_stage3.api_fbak_flag | array<integer> | Friendly-side bombing flag. | 0=none, 1=present |
+| api_stage3.api_ebak_flag | array<integer> | Enemy-side bombing flag. | 0=none, 1=present |
+| api_stage3.api_fcl_flag | array<integer> | Friendly-side hit/critical flag. | 0=none/miss/no attack, 1=hit, 2=critical; verify per stage |
+| api_stage3.api_ecl_flag | array<integer> | Enemy-side hit/critical flag. | 0=none/miss/no attack, 1=hit, 2=critical; verify per stage |
+| api_stage3.api_fdam | array<number> | Friendly-side damage numbers for airstrike stage. | 0, positive integer, sometimes decimal like 0.1 for scratch/rounding marker |
+| api_stage3.api_edam | array<number> | Enemy-side damage numbers for airstrike stage. | 0, positive integer, sometimes decimal like 0.1 |
+
+Hougeki / shelling fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_hougeki*.api_at_eflag | array<integer> | Attacker side flag. | 0=friendly, 1=enemy |
+| api_hougeki*.api_at_list | array<integer> | Attacker position/index list. | 0-based or API battle index; variable. Often -1 for no attacker in some arrays |
+| api_hougeki*.api_at_type | array<integer> | Attack type ID. | 0=normal attack; other values indicate special attacks/cutin/double attack; mapping is complex and mechanic-specific |
+| api_hougeki*.api_df_list | array<array<integer>> | Defender/target position list. | nested arrays of target indexes |
+| api_hougeki*.api_si_list | array<array<number|string>> | Equipment/item IDs used in attack. | nested arrays; may contain numbers or numeric strings |
+| api_hougeki*.api_cl_list | array<array<integer>> | Hit/critical flag per hit. | 0=miss/no hit, 1=hit, 2=critical; sometimes other special values possible |
+| api_hougeki*.api_damage | array<array<number>> | Damage per hit. | 0, positive number, sometimes decimal markers like 0.1 |
+
+Opening torpedo / torpedo phase fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_opening_atack.api_frai_list_items | array | Friendly opening torpedo target list items. | null or arrays of target indexes |
+| api_opening_atack.api_fcl_list_items | array | Friendly opening torpedo hit/critical flags. | null or arrays; 0=miss/no hit, 1=hit, 2=critical |
+| api_opening_atack.api_fdam | array<number> | Friendly-side damage summary. | 0, positive number, sometimes decimal |
+| api_opening_atack.api_fydam_list_items | array | Friendly opening torpedo actual damage list items. | null or arrays of numbers |
+| api_opening_atack.api_erai_list_items | array | Enemy opening torpedo target list items. | null or arrays |
+| api_opening_atack.api_ecl_list_items | array | Enemy opening torpedo hit/critical flags. | null or arrays; 0/1/2 common |
+| api_opening_atack.api_edam | array<number> | Enemy-side damage summary. | 0, positive number, sometimes decimal |
+| api_raigeki.api_frai | array<integer> | Friendly torpedo target list. | -1=no target/no attack, otherwise target index |
+| api_raigeki.api_fcl | array<integer> | Friendly torpedo hit/critical result. | 0=miss/no hit, 1=hit, 2=critical |
+| api_raigeki.api_fdam | array<number> | Friendly damage taken/dealt array depending side convention. | 0, positive number, sometimes decimal |
+| api_raigeki.api_fydam | array<number> | Friendly torpedo actual damage array. | 0, positive number |
+| api_raigeki.api_erai | array<integer> | Enemy torpedo target list. | -1=no target/no attack, otherwise target index |
+| api_raigeki.api_ecl | array<integer> | Enemy torpedo hit/critical result. | 0=miss/no hit, 1=hit, 2=critical |
+| api_raigeki.api_edam | array<number> | Enemy damage summary. | 0, positive number |
+| api_raigeki.api_eydam | array<number> | Enemy torpedo actual damage array. | 0, positive number |
+
+Raw battle result response fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| api_win_rank | string | Raw battle rank. For automation, prefer poi @@BattleResult.rank if available. | "SS", "S", "A", "B", "C", "D", "E"; exact set depends on era/mechanics; common ranks are S/A/B/C/D |
+| api_quest_name | string | Enemy fleet/quest name in result screen. | variable string |
+| api_quest_level | integer | Enemy fleet difficulty/level-like display. | variable integer |
+| api_enemy_info | object | Enemy information for result screen. | object or null |
+| api_enemy_info.api_deck_name | string | Enemy deck name. | variable string |
+| api_get_ship | object or null | Drop ship information. | null or object |
+| api_get_ship.api_ship_id | integer | Dropped ship master ID. | positive ship master ID |
+| api_get_ship.api_ship_type | string | Dropped ship class/type displayed by the game. | localized string, e.g. destroyer or light cruiser |
+| api_get_ship.api_ship_name | string | Dropped ship name displayed by the game. Preferred source for the drop name. | variable localized ship name |
+| api_get_ship.api_ship_getmes | string | Dropped ship acquisition message; may contain HTML line breaks. | variable string |
+| api_get_eventitem | object or null | Event item reward. | null or object |
+| api_get_useitem | object or null | Use-item reward. | null or object |
+| api_mvp | integer | MVP position for single/main fleet. | 1-6; -1/0 may indicate none/invalid depending endpoint |
+| api_mvp_combined | integer | MVP position for escort/combined fleet. | 1-6; -1/0 may indicate none/invalid depending endpoint |
+
+Derived day-battle HP event fields
+
+`day_battle_hp_update` is emitted immediately after its source day-battle response in the same FIFO queue. The game response HP arrays are battle-start values; these fields are the result after applying all day-battle stages with poi-lib-battle 2.20.0.
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| day_battle_hp.valid | boolean | Whether day-battle HP simulation completed. | true |
+| day_battle_hp.simulator | string | Simulator/version used for the derived event. | poi-lib-battle@2.20.0 |
+| day_battle_hp.derived_from_event | string | Original game.response event classification. | sortie_battle_response, combined_battle_response, practice_battle_response, etc. |
+| day_battle_hp.derived_from_event_id | string | `event_id` of the immediately preceding source response. | session UUID + sequence |
+| day_battle_hp.deck_id | integer | Participating friendly deck ID. | 1-4 |
+| day_battle_hp.combined_flag | integer | Friendly combined-fleet type at calculation time. | 0-3 |
+| day_battle_hp.api_formation | array<integer> or null | Friendly formation, enemy formation, engagement tuple. | [friendly, enemy, engagement] |
+| day_battle_hp.api_midnight_flag | integer or null | Whether the game offers a night-battle choice after day battle. | 0, 1, null |
+| day_battle_hp.player_main | array<object> | Friendly main-fleet HP after day battle. | array |
+| day_battle_hp.player_escort | array<object> | Friendly escort-fleet HP after day battle. | empty or array |
+| day_battle_hp.enemy_main | array<object> | Enemy main-fleet HP after day battle. | array |
+| day_battle_hp.enemy_escort | array<object> | Enemy escort-fleet HP after day battle. | empty or array |
+| day_battle_hp.*[].position | integer | One-based position within that fleet. | 1-6 |
+| day_battle_hp.*[].instance_id | integer or null | Owned ship instance ID; null for enemy ships. | positive integer or null |
+| day_battle_hp.*[].ship_id | integer | Master ship ID. | positive integer |
+| day_battle_hp.*[].initial_hp | integer | HP at the start of this day-battle response. | integer |
+| day_battle_hp.*[].now_hp | integer | Display HP after day battle, clamped to zero. | 0 or positive integer |
+| day_battle_hp.*[].raw_now_hp | integer | Simulator HP including overkill below zero. | integer |
+| day_battle_hp.*[].max_hp | integer | Maximum HP. | positive integer |
+| day_battle_hp.*[].lost_hp | integer | Calculated damage during the day battle. | 0 or positive integer |
+| day_battle_hp.*[].used_damage_control | integer or null | Damage-control item consumed by simulation. | 42, 43, null |
+
+poi @@BattleResult normalized fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| battle_result.valid | boolean | Whether poi considers battle result valid. | true, false |
+| battle_result.rank | string | Battle rank normalized by poi. | "SS", "S", "A", "B", "C", "D", "E"; common: "S", "A", "B", "C", "D" |
+| battle_result.boss | boolean | Whether this result is boss node. | true, false |
+| battle_result.map | integer | Map ID encoded by poi. | variable |
+| battle_result.map_cell | integer | Route number / api_no for battle node. | variable route number |
+| battle_result.quest | string | Enemy fleet/map result name. | variable string |
+| battle_result.enemy | string | Enemy fleet name. | variable string |
+| battle_result.combined | boolean | Whether battle is combined fleet. | true, false |
+| battle_result.mvp | array<integer> | MVP positions. | [main_mvp, escort_mvp], values typically 1-6 or -1 |
+| battle_result.drop_item | object or null | Drop item. | null or object |
+| battle_result.drop_ship_id | integer or null | Dropped ship master ID. | positive ship ID, -1, null |
+| battle_result.drop_ship_name | string or null | Exporter-enriched drop name copied from the preceding raw battleresult api_get_ship. | null or localized ship name |
+| battle_result.drop_ship_type | string or null | Exporter-enriched drop type copied from the preceding raw battleresult api_get_ship. | null or localized ship type |
+| battle_result.deck_ship_id | array<integer> | Friendly ship instance IDs in deck. | variable instance IDs |
+| battle_result.deck_hp | array<integer> | Friendly HP after battle. | integers, same order as deck_ship_id |
+| battle_result.deck_init_hp | array<integer> | Friendly HP at battle start. Not max HP. | integers, same order as deck_ship_id |
+| battle_result.enemy_ship_id | array<integer> | Enemy ship master IDs. | variable ship IDs |
+| battle_result.enemy_formation | integer | Enemy formation from battle data. | 1=Line Ahead, 2=Double Line, 3=Diamond, 4=Echelon, 5=Line Abreast; combined/special values possible |
+| battle_result.enemy_hp | array<integer> | Enemy HP after battle. | integers |
+| battle_result.event_item | object or null | Event item reward. | null or object |
+| battle_result.time | integer | Battle/result timestamp from poi. | Unix timestamp-like integer |
+
+Fleet snapshot fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| fleet_snapshot[].deck_id | integer | Fleet ID. | 1, 2, 3, 4 |
+| fleet_snapshot[].fleet_index | integer | Zero-based fleet index. | 0, 1, 2, 3 |
+| fleet_snapshot[].name | string | Fleet name. | variable string |
+| fleet_snapshot[].mission | array<integer> or null | Mission/expedition state tuple from deck API. | [0,0,0,0]=not in mission; [1,mission_id,return_time,0] commonly indicates mission underway; exact tuple from game API |
+| fleet_snapshot[].ship_count | integer | Number of active ships in fleet. | 0-6 for normal fleet |
+| fleet_snapshot[].ships | array<object> | Ship snapshots. | array |
+| fleet_snapshot[].ships[].position | integer | 1-based fleet position. | 1, 2, 3, 4, 5, 6 |
+| fleet_snapshot[].ships[].instance_id | integer | Owned ship instance ID. | variable positive integer |
+| fleet_snapshot[].ships[].ship_id | integer | Master ship ID. | variable positive integer |
+| fleet_snapshot[].ships[].level | integer | Ship level. | 1-175 |
+| fleet_snapshot[].ships[].now_hp | integer | Current HP. | 0 or positive integer |
+| fleet_snapshot[].ships[].max_hp | integer | Max HP. Use this for damage-state calculation, not deck_init_hp. | positive integer |
+| fleet_snapshot[].ships[].cond | integer | Morale/condition value. | usually 0-100; common display thresholds: <=19 red fatigue, 20-29 orange fatigue, 30-49 normal, 50+ sparkled |
+| fleet_snapshot[].ships[].fuel | integer | Current fuel. | 0 or positive integer |
+| fleet_snapshot[].ships[].bullet | integer | Current ammo. | 0 or positive integer |
+| fleet_snapshot[].ships[].slot | array<integer> | Equipment instance IDs. | positive item instance ID, -1=empty slot |
+
+Sortie snapshot fields
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| sortie_snapshot.combined_flag | integer | Combined fleet type/state from poi store.sortie.combinedFlag. | 0=not combined; 1/2/3 are combined fleet types in common tooling, exact mapping depends on game/API context |
+| sortie_snapshot.sortie_status | array<boolean> | Per-fleet sortie/practice state. | [false|true, false|true, false|true, false|true] |
+| sortie_snapshot.escaped_pos | array<integer> | Escaped/evacuated ship positions. | [] or integer position/index values depending poi store format |
+
+Generic fixed values useful for controller logic
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| damage_state(now_hp,max_hp) | derived string | Derived display/controller state. Use integer comparison, not rounding. | sunk_or_zero: now_hp<=0; taiha: now_hp>0 and now_hp*4<=max_hp; chuuha: now_hp*4>max_hp and now_hp*2<=max_hp; shouha_or_scratch: now_hp<max_hp; normal: now_hp==max_hp |
+| hit/critical flag values | integer | Common cl_list / fcl / ecl style result. | 0=miss/no hit/no attack, 1=hit, 2=critical |
+| side eflag values | integer | Attacker side. | 0=friendly, 1=enemy |
+| presence flag values | integer | Generic phase/stage existence flags. | 0=absent/false, 1=present/true |
+| empty slot / no target marker | integer | Common marker in equipment/target arrays. | -1=none/empty/no target |
+| scratch damage marker | number | Some damage arrays may contain decimal marker. | 0.1 sometimes appears as scratch/rounding placeholder; treat as nonzero scratch display, not a normal integer damage |
+
+Implementation notes for Codex:
+1. Do not assume response_body always has api_data. In the user's logs, response_body often appears to be api_data itself.
+2. Convert request numeric strings to int before comparisons: "1" and 1 should be treated the same.
+3. Use api_event_kind + api_event_id + api_e_deck_info together for node classification; api_color_no alone is not enough.
+4. Use api_midnight_flag==1 from day battle response to infer a night-battle choice prompt.
+5. Use @@BattleResult for final rank/HP/result; raw battleresult response is useful for logging but less ideal for controller logic.
+6. Use fleet_snapshot max_hp for taiha/chuuha calculation; deck_init_hp is battle-start HP, not max HP.
+7. Treat all event-map/special-mechanic fields as extensible. Unknown numeric values should be logged, not treated as fatal errors.
+
+Source notes:
+- poi game.request/game.response events: poi docs describe request event as method/path/body and response event as method/path/body/postBody.
+- poi @@BattleResult: poi Redux docs list rank, boss, mapCell, deckShipId, deckHp, deckInitHp, enemyFormation, enemyHp and recommend @@BattleResult for battle result.
+- api_color_no/api_event_kind/api_rashin_* values: old/community API notes and api_start2/mapcell notes; use as hints, not as a formal stable schema.
+- Current kcsapi TypeScript definitions confirm map start/next field shapes and which fields are optional, including api_eventmap, api_select_route and api_limit_state.
+- poi-plugin-prophet getSpotKind supplies the contextual api_event_id + api_event_kind mappings; its internal spot kind 12 means Manual Selection and is not a raw API value.
+- api_formation/engagement values: community raw API notes; combined formation 11-14 commonly maps to the four combined formations.

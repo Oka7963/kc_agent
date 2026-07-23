@@ -4,6 +4,7 @@ import { observe, observer } from 'redux-observers'
 import { createSelector } from 'reselect'
 import { store } from 'views/create-store'
 import { extensionSelectorFactory } from 'views/utils/selectors'
+import { Fleet, Simulator } from './lib/battle'
 
 const EXPORT_URL = 'http://127.0.0.1:8765/poi-event'
 const PLUGIN_LOADED_URL = 'http://127.0.0.1:8765/poi-plugin-loaded'
@@ -11,19 +12,24 @@ const EXTENSION_KEY = 'poi-plugin-battle-event-exporter'
 
 let enabled = false
 let sequence = 0
+let exportQueue = []
+let sending = false
+let retryTimer = null
+let retryAttempt = 0
 let unsubscribeObserve = null
+let lastBattleResultDrop = null
+
+const EXPORTER_SESSION_ID = createSessionId()
+const INITIAL_RETRY_DELAY_MS = 1000
+const MAX_RETRY_DELAY_MS = 30000
 
 export function pluginDidLoad() {
   enabled = true
 
-  window.addEventListener('game.request', onGameRequest)
   window.addEventListener('game.response', onGameResponse)
   postPluginLoaded()
+  drainExportQueue()
 
-  /*
-   * Use observer for side effect.
-   * reducer only updates plugin state.
-   */
   unsubscribeObserve = observe(store, [
     observer(
       battleResultSeqSelector,
@@ -36,6 +42,7 @@ export function pluginDidLoad() {
         const payload = ext && ext.lastBattleResultEvent
 
         if (payload) {
+          // The normalized result joins the same FIFO used by game.response.
           postExport(payload)
         }
       },
@@ -48,8 +55,12 @@ export function pluginDidLoad() {
 export function pluginWillUnload() {
   enabled = false
 
-  window.removeEventListener('game.request', onGameRequest)
   window.removeEventListener('game.response', onGameResponse)
+
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
 
   if (unsubscribeObserve) {
     unsubscribeObserve()
@@ -59,10 +70,6 @@ export function pluginWillUnload() {
   console.log('[battle-event-exporter] plugin unloaded')
 }
 
-/*
- * Reducer should only update plugin state.
- * poi docs say reducer's third argument is the whole Redux store.
- */
 export const reducer = (state = { battleResultSeq: 0 }, action, rootStore) => {
   if (!action || action.type !== '@@BattleResult') {
     return state
@@ -77,9 +84,6 @@ export const reducer = (state = { battleResultSeq: 0 }, action, rootStore) => {
   }
 }
 
-/*
- * Selectors for observer.
- */
 const extensionSelector = createSelector(
   extensionSelectorFactory(EXTENSION_KEY),
   (state) => state || {},
@@ -90,40 +94,22 @@ const battleResultSeqSelector = createSelector(
   (state) => state.battleResultSeq,
 )
 
-/*
- * game.request and game.response are explicitly documented by poi.
- */
-function onGameRequest(e) {
-  if (!enabled) return
-
-  const detail = e.detail || {}
-  const path = detail.path || ''
-
-  if (!isBattleFlowPath(path)) return
-
-  postExport({
-    event: classifyPath(path, 'request'),
-    phase: 'request',
-    source: 'game.request',
-    method: detail.method || null,
-    path,
-    request_body: sanitizeBody(detail.body),
-    response_summary: null,
-    response_body: null,
-    fleet_snapshot: buildFleetSnapshotFromStore(),
-    sortie_snapshot: buildSortieSnapshotFromStore(),
-  })
-}
-
 function onGameResponse(e) {
   if (!enabled) return
 
   const detail = e.detail || {}
   const path = detail.path || ''
 
-  if (!isBattleFlowPath(path)) return
+  if (!isExportedResponsePath(path)) return
 
-  postExport({
+  if (isBattleResultPath(path)) {
+    lastBattleResultDrop = extractDropShip(detail.body)
+  }
+
+  const rootStore = store.getState()
+  const fleetSnapshot = buildFleetSnapshot(rootStore)
+
+  const sourceEvent = postExport({
     event: classifyPath(path, 'response'),
     phase: 'response',
     source: 'game.response',
@@ -132,20 +118,44 @@ function onGameResponse(e) {
     request_body: sanitizeBody(detail.postBody),
     response_summary: summarizeKcsResponse(path, detail.body),
     response_body: sanitizeBody(detail.body),
-    fleet_snapshot: buildFleetSnapshotFromStore(),
-    sortie_snapshot: buildSortieSnapshotFromStore(),
+    fleet_snapshot: fleetSnapshot,
+    sortie_snapshot: buildSortieSnapshot(rootStore),
   })
+
+  const hpUpdate = buildDayBattleHpEvent(
+    path,
+    detail.postBody,
+    detail.body,
+    rootStore,
+    fleetSnapshot,
+  )
+  if (hpUpdate) {
+    hpUpdate.day_battle_hp.derived_from_event_id = sourceEvent && sourceEvent.event_id
+    postExport(hpUpdate)
+  }
 }
 
 /*
  * This uses path prefix instead of pretending poi docs list every battle endpoint.
  * poi docs guarantee we can get path; path classification is our own logic.
  */
-function isBattleFlowPath(path) {
+function isExportedResponsePath(path) {
   if (!path) return false
 
+  // Paths explicitly handled by poi-plugin-prophet's response listener.
+  if (path === '/kcsapi/api_start2/getData') return true
+  if (path === '/kcsapi/api_port/port') return true
   if (path === '/kcsapi/api_req_map/start') return true
   if (path === '/kcsapi/api_req_map/next') return true
+  if (path === '/kcsapi/api_req_map/air_raid') return true
+  if (path === '/kcsapi/api_req_map/start_air_base') return true
+  if (path === '/kcsapi/api_req_member/get_practice_enemyinfo') return true
+
+  // Paths handled by Prophet's use-item reducer.
+  if (path === '/kcsapi/api_get_member/require_info') return true
+  if (path === '/kcsapi/api_get_member/useitem') return true
+  if (path === '/kcsapi/api_req_kousyou/remodel_slotlist_detail') return true
+  if (path === '/kcsapi/api_req_mission/result') return true
 
   if (path.indexOf('/kcsapi/api_req_sortie/') === 0) return true
   if (path.indexOf('/kcsapi/api_req_battle_midnight/') === 0) return true
@@ -163,8 +173,22 @@ function isBattleFlowPath(path) {
 }
 
 function classifyPath(path, phase) {
+  if (path === '/kcsapi/api_start2/getData') return 'game_start_' + phase
+  if (path === '/kcsapi/api_port/port') return 'port_' + phase
   if (path === '/kcsapi/api_req_map/start') return 'map_start_' + phase
   if (path === '/kcsapi/api_req_map/next') return 'map_next_' + phase
+  if (path === '/kcsapi/api_req_map/air_raid') return 'map_air_raid_' + phase
+  if (path === '/kcsapi/api_req_map/start_air_base') return 'map_start_air_base_' + phase
+  if (path === '/kcsapi/api_req_member/get_practice_enemyinfo') {
+    return 'practice_enemy_info_' + phase
+  }
+
+  if (path === '/kcsapi/api_get_member/require_info') return 'require_info_' + phase
+  if (path === '/kcsapi/api_get_member/useitem') return 'useitem_update_' + phase
+  if (path === '/kcsapi/api_req_kousyou/remodel_slotlist_detail') {
+    return 'remodel_slotlist_detail_' + phase
+  }
+  if (path === '/kcsapi/api_req_mission/result') return 'mission_result_' + phase
 
   if (path === '/kcsapi/api_get_member/ship2') return 'ship2_update_' + phase
   if (path === '/kcsapi/api_get_member/ship3') return 'ship3_update_' + phase
@@ -211,6 +235,10 @@ function classifyPath(path, phase) {
   return 'battle_flow_' + phase
 }
 
+function isBattleResultPath(path) {
+  return path.indexOf('battleresult') >= 0 || path.indexOf('battle_result') >= 0
+}
+
 function buildBattleResultEvent(result, rootStore) {
   return {
     event: 'battle_result',
@@ -221,13 +249,13 @@ function buildBattleResultEvent(result, rootStore) {
     request_body: null,
     response_summary: null,
     response_body: null,
-    battle_result: summarizePoiBattleResult(result),
+    battle_result: summarizePoiBattleResult(result, lastBattleResultDrop),
     fleet_snapshot: buildFleetSnapshot(rootStore),
     sortie_snapshot: buildSortieSnapshot(rootStore),
   }
 }
 
-function summarizePoiBattleResult(result) {
+function summarizePoiBattleResult(result, dropShip) {
   if (!result) return null
 
   return {
@@ -241,7 +269,9 @@ function summarizePoiBattleResult(result) {
     combined: result.combined,
     mvp: result.mvp || [],
     drop_item: result.dropItem || null,
-    drop_ship_id: result.dropShipId || null,
+    drop_ship_id: result.dropShipId || (dropShip && dropShip.ship_id) || null,
+    drop_ship_name: (dropShip && dropShip.ship_name) || null,
+    drop_ship_type: (dropShip && dropShip.ship_type) || null,
     deck_ship_id: result.deckShipId || [],
     deck_hp: result.deckHp || [],
     deck_init_hp: result.deckInitHp || [],
@@ -253,9 +283,22 @@ function summarizePoiBattleResult(result) {
   }
 }
 
+function extractDropShip(body) {
+  const data = getKcsResponseData(body)
+  const ship = data && data.api_get_ship
+
+  if (!ship || typeof ship !== 'object') return null
+
+  return {
+    ship_id: ship.api_ship_id,
+    ship_type: ship.api_ship_type,
+    ship_name: ship.api_ship_name,
+  }
+}
+
 function summarizeKcsResponse(path, body) {
   const top = normalizeBody(body)
-  const data = top && top.api_data ? top.api_data : null
+  const data = getKcsResponseData(body)
 
   const summary = {
     api_result: top ? top.api_result : undefined,
@@ -344,6 +387,184 @@ function isBattleApiPath(path) {
   )
 }
 
+const DAY_BATTLE_PATHS = new Set([
+  '/kcsapi/api_req_practice/battle',
+  '/kcsapi/api_req_sortie/battle',
+  '/kcsapi/api_req_sortie/airbattle',
+  '/kcsapi/api_req_sortie/ld_airbattle',
+  '/kcsapi/api_req_sortie/ld_shooting',
+  '/kcsapi/api_req_combined_battle/battle',
+  '/kcsapi/api_req_combined_battle/battle_water',
+  '/kcsapi/api_req_combined_battle/airbattle',
+  '/kcsapi/api_req_combined_battle/ld_airbattle',
+  '/kcsapi/api_req_combined_battle/ld_shooting',
+  '/kcsapi/api_req_combined_battle/ec_battle',
+  '/kcsapi/api_req_combined_battle/each_battle',
+  '/kcsapi/api_req_combined_battle/each_battle_water',
+  '/kcsapi/api_req_combined_battle/ec_night_to_day',
+])
+
+function buildDayBattleHpEvent(path, postBody, body, rootStore, fleetSnapshot) {
+  if (!DAY_BATTLE_PATHS.has(path)) return null
+
+  const data = getKcsResponseData(body)
+  if (!data || !Array.isArray(data.api_f_nowhps) || !Array.isArray(data.api_e_nowhps)) {
+    return null
+  }
+
+  try {
+    const info = rootStore && rootStore.info ? rootStore.info : {}
+    const sortie = rootStore && rootStore.sortie ? rootStore.sortie : {}
+    const fleets = info.fleets || []
+    const request = normalizeBody(postBody) || {}
+    const deckId = Number(data.api_deck_id || request.api_deck_id || 1)
+    const combinedFlag = Number(sortie.combinedFlag || 0)
+    const mainDeckIndex = combinedFlag > 0 ? 0 : Math.max(deckId - 1, 0)
+    const mainDeck = fleets[mainDeckIndex]
+    const escortDeck = combinedFlag > 0 ? fleets[1] : null
+
+    if (!mainDeck) return null
+
+    const simulatorFleet = new Fleet({
+      type: combinedFlag,
+      main: buildSimulatorDeck(mainDeck, info),
+      escort: buildSimulatorDeck(escortDeck, info),
+      support: null,
+      LBAC: null,
+    })
+    const simulator = new Simulator(simulatorFleet, { usePoiAPI: false })
+
+    syncSimulatorHp(simulator.mainFleet, data.api_f_nowhps)
+    syncSimulatorHp(simulator.escortFleet, data.api_f_nowhps_combined)
+    simulator.simulate({ ...data, poi_path: path })
+
+    const mainSnapshot = fleetSnapshot.find((fleet) => fleet.deck_id === mainDeckIndex + 1)
+    const escortSnapshot = combinedFlag > 0
+      ? fleetSnapshot.find((fleet) => fleet.deck_id === 2)
+      : null
+    const playerMain = summarizeSimulatedFleet(simulator.mainFleet, mainSnapshot, false)
+    const playerEscort = summarizeSimulatedFleet(simulator.escortFleet, escortSnapshot, false)
+    const enemyMain = summarizeSimulatedFleet(simulator.enemyFleet, null, true)
+    const enemyEscort = summarizeSimulatedFleet(simulator.enemyEscort, null, true)
+
+    return {
+      event: 'day_battle_hp_update',
+      phase: 'derived',
+      source: 'game.response+poi-lib-battle',
+      method: null,
+      path,
+      request_body: sanitizeBody(postBody),
+      response_summary: null,
+      response_body: null,
+      day_battle_hp: {
+        valid: true,
+        simulator: 'poi-lib-battle@2.20.0',
+        derived_from_event: classifyPath(path, 'response'),
+        deck_id: deckId,
+        combined_flag: combinedFlag,
+        api_formation: data.api_formation || null,
+        api_midnight_flag: data.api_midnight_flag,
+        player_main: playerMain,
+        player_escort: playerEscort,
+        enemy_main: enemyMain,
+        enemy_escort: enemyEscort,
+      },
+      fleet_snapshot: buildCalculatedFleetSnapshot(
+        mainSnapshot,
+        escortSnapshot,
+        playerMain,
+        playerEscort,
+      ),
+      sortie_snapshot: buildSortieSnapshot(rootStore),
+    }
+  } catch (error) {
+    console.warn('[battle-event-exporter] failed to calculate day battle HP', error)
+    return null
+  }
+}
+
+function buildSimulatorDeck(deck, info) {
+  if (!deck || !Array.isArray(deck.api_ship)) return null
+
+  const ships = info.ships || {}
+  const equips = info.equips || {}
+
+  return deck.api_ship.map((instanceId) => {
+    const ship = ships[instanceId]
+    if (!ship || instanceId <= 0) return null
+
+    const toSlot = (slotId) => {
+      const equip = equips[slotId]
+      return equip ? { api_slotitem_id: equip.api_slotitem_id } : null
+    }
+
+    return {
+      ...ship,
+      poi_slot: (ship.api_slot || []).map(toSlot),
+      poi_slot_ex: ship.api_slot_ex > 0 ? [toSlot(ship.api_slot_ex)] : [],
+    }
+  })
+}
+
+function syncSimulatorHp(fleet, nowHps) {
+  if (!Array.isArray(fleet) || !Array.isArray(nowHps)) return
+
+  fleet.forEach((ship, index) => {
+    if (!ship || typeof nowHps[index] !== 'number') return
+    ship.nowHP = nowHps[index]
+    ship.initHP = nowHps[index]
+  })
+}
+
+function summarizeSimulatedFleet(fleet, snapshot, enemy) {
+  if (!Array.isArray(fleet)) return []
+  const snapshotShips = snapshot && snapshot.ships ? snapshot.ships : []
+
+  return fleet.reduce((result, ship, index) => {
+    if (!ship) return result
+    const initialHp = ship.initHP
+    const rawNowHp = ship.nowHP
+    const snapshotShip = snapshotShips.find((item) => item.position === index + 1) || {}
+
+    result.push({
+      position: index + 1,
+      instance_id: enemy ? null : ((ship.raw && ship.raw.api_id) || snapshotShip.instance_id),
+      ship_id: ship.id,
+      initial_hp: initialHp,
+      now_hp: Math.max(0, rawNowHp),
+      raw_now_hp: rawNowHp,
+      max_hp: ship.maxHP,
+      lost_hp: ship.lostHP,
+      used_damage_control: ship.useItem || null,
+    })
+    return result
+  }, [])
+}
+
+function buildCalculatedFleetSnapshot(
+  mainSnapshot,
+  escortSnapshot,
+  playerMain,
+  playerEscort,
+) {
+  const update = (snapshot, calculated) => {
+    if (!snapshot) return null
+    return {
+      ...snapshot,
+      ships: (snapshot.ships || []).map((ship) => {
+        const hp = calculated.find((item) => item.instance_id === ship.instance_id)
+          || calculated.find((item) => item.position === ship.position)
+        return hp ? { ...ship, now_hp: hp.now_hp } : ship
+      }),
+    }
+  }
+
+  return [
+    update(mainSnapshot, playerMain),
+    update(escortSnapshot, playerEscort),
+  ].filter(Boolean)
+}
+
 function buildFleetSnapshotFromStore() {
   return buildFleetSnapshot(store.getState())
 }
@@ -420,6 +641,18 @@ function normalizeBody(body) {
   return body
 }
 
+function getKcsResponseData(body) {
+  const top = normalizeBody(body)
+
+  if (!top || typeof top !== 'object') return null
+  if (Object.prototype.hasOwnProperty.call(top, 'api_data')) {
+    return top.api_data
+  }
+
+  // poi may emit game.response.detail.body as api_data directly.
+  return top
+}
+
 function sanitizeBody(body) {
   const normalized = normalizeBody(body)
 
@@ -451,30 +684,53 @@ function removeSensitiveKeys(obj) {
 }
 
 function postExport(payload) {
-  if (!enabled) return
+  if (!enabled) return null
 
   sequence += 1
 
   const finalPayload = {
     ...payload,
+    session_id: EXPORTER_SESSION_ID,
     seq: sequence,
     exported_at: Date.now(),
   }
 
-  postJson(EXPORT_URL, finalPayload)
+  finalPayload.event_id = EXPORTER_SESSION_ID + ':' + sequence
+  exportQueue.push(finalPayload)
+  drainExportQueue()
+  return finalPayload
 }
 
 function postPluginLoaded() {
-  postJson(PLUGIN_LOADED_URL, {
+  postJsonOnce(PLUGIN_LOADED_URL, {
     plugin: EXTENSION_KEY,
     message: 'Poi loaded Battle Event Exporter',
+    session_id: EXPORTER_SESSION_ID,
     loaded_at: Date.now(),
   })
 }
 
-function postJson(url, payload) {
+function createSessionId() {
+  if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+    return window.crypto.randomUUID()
+  }
+
+  return (
+    Date.now().toString(36) +
+    '-' +
+    Math.random().toString(36).slice(2) +
+    Math.random().toString(36).slice(2)
+  )
+}
+
+function drainExportQueue() {
+  if (!enabled || sending || retryTimer || exportQueue.length === 0) return
+
+  const payload = exportQueue[0]
+  sending = true
+
   try {
-    fetch(url, {
+    fetch(EXPORT_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -483,13 +739,64 @@ function postJson(url, payload) {
     })
       .then((res) => {
         if (!res.ok) {
-          console.warn('[battle-event-exporter] export failed:', res.status, res.statusText)
+          throw new Error('HTTP ' + res.status + ' ' + res.statusText)
         }
+
+        // Remove only the acknowledged queue head. No later event can be sent first.
+        if (exportQueue[0] === payload) {
+          exportQueue.shift()
+        }
+
+        sending = false
+        retryAttempt = 0
+        drainExportQueue()
       })
       .catch((err) => {
-        console.warn('[battle-event-exporter] export error:', err)
+        handleExportFailure(payload, err)
       })
   } catch (err) {
-    console.warn('[battle-event-exporter] fetch failed:', err)
+    handleExportFailure(payload, err)
+  }
+}
+
+function handleExportFailure(payload, err) {
+  sending = false
+  retryAttempt += 1
+
+  const delay = Math.min(
+    INITIAL_RETRY_DELAY_MS * Math.pow(2, Math.min(retryAttempt - 1, 5)),
+    MAX_RETRY_DELAY_MS,
+  )
+
+  console.warn(
+    '[battle-event-exporter] export failed; retrying queue head:',
+    payload.event_id,
+    'in',
+    delay,
+    'ms',
+    err,
+  )
+
+  if (!enabled || retryTimer) return
+
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    drainExportQueue()
+  }, delay)
+}
+
+function postJsonOnce(url, payload) {
+  try {
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }).catch((err) => {
+      console.warn('[battle-event-exporter] one-shot POST failed:', err)
+    })
+  } catch (err) {
+    console.warn('[battle-event-exporter] one-shot fetch failed:', err)
   }
 }

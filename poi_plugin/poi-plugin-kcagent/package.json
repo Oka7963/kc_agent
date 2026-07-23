@@ -1,12 +1,12 @@
 {
   "name": "poi-plugin-battle-event-exporter",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "main": "index.es",
   "description": "Export poi battle-related events to local Python server",
   "author": "local",
   "poiPlugin": {
     "title": "Battle Event Exporter",
-    "description": "Export battle-related kcsapi request/response and @@BattleResult to localhost",
+    "description": "Reliably export ordered Prophet-compatible kcsapi responses to localhost",
     "icon": "fa/rss",
     "priority": 1000
   }
