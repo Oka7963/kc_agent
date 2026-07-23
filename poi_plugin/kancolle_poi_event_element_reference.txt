@@ -13,6 +13,57 @@ Legend:
 - "variable" = not a fixed enum; treat as data.
 - "unknown/reserved" = value exists in logs/community notes but exact semantics are not stable or not verified.
 
+Receiver unified JSONL format
+
+The plugin payload remains unchanged over HTTP. `battle_receiver.py` converts
+each accepted payload into one receiver-owned JSONL record. Only fields for
+which the current packet contains usable data appear under `updates`.
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| schema | string | Receiver output schema identifier. | battle_receiver.v1 |
+| packet_no | integer | Receiver-local monotonically increasing packet number for debugging. | 1, 2, 3, ... |
+| error | object or null | Packet/API/ordering error. Null means the packet was structurally processed successfully. | null or `{code,message}` |
+| accepted | boolean | Whether the plugin event was accepted into delivery state. | true, false |
+| received_at | string | Receiver timestamp with local timezone. | ISO 8601 |
+| event_id | string or null | Unchanged plugin event ID. | session UUID + plugin seq |
+| session_id | string or null | Unchanged plugin session ID. | UUID-like string |
+| seq | integer or null | Unchanged plugin FIFO sequence number. | 1, 2, 3, ... |
+| event | string | Unchanged plugin event classification, or receiver_error/plugin_loaded for receiver records. | variable |
+| phase | string | Plugin phase or receiver. | response, derived, poi_battle_result, receiver |
+| source | string | Plugin source or battle_receiver. | game.response, game.response+poi-lib-battle, @@BattleResult, battle_receiver |
+| path | string or null | Original API/receiver path. | variable |
+| exported_at | integer or null | Unchanged plugin export timestamp. | Unix milliseconds |
+| updates | object | Partial normalized data supplied by this packet. Missing/empty fields are omitted. | request, api, map, formation, night_battle, player_fleet, enemy_fleet, enemy_preview, battle, battle_result |
+| raw_event | object, optional | Unchanged plugin payload, included only with receiver `--full-body`. | object |
+
+Receiver `error.code` values currently include `missing_event`, `api_error`,
+`simulation_invalid`, `duplicate`, `out_of_order`, `unsupported_path`,
+`invalid_content_length`, `invalid_json_type`, `bad_json`, and
+`processing_error`, `log_write_failed`.
+
+Important normalized update fields:
+
+| element | data type | description | possible value |
+|---|---|---|---|
+| updates.map.map_id | integer | Master map ID calculated from area/no or supplied by battle result. | 11, 13, 621, etc. |
+| updates.map.map_name | string | Map name cached from ignored `game_start_response.api_mst_mapinfo`. | localized map name |
+| updates.map.node_type | object | Broad current-node category plus detailed API meaning. | `{code,name,detail}`; battle, boss_battle, resource, whirlpool, route_selection, aviation, no_event, port, recon, etc. |
+| updates.formation.friendly | object | Current friendly formation. | `{value,name}` |
+| updates.formation.enemy | object | Current enemy formation. | `{value,name}` |
+| updates.formation.engagement | object | Engagement type. | `{value,name}` |
+| updates.formation.last_selected | object | Most recently observed explicit `request_body.api_formation`, including source event/seq. | `{value,name,source,event,event_id,seq}` |
+| updates.player_fleet.*[].hp | string | Readable friendly HP. | current/max, e.g. `7/30` |
+| updates.enemy_fleet.*[].hp | string | Readable enemy HP. | current/max, e.g. `0/33` |
+| updates.*_fleet.*[].now_hp | integer | Current display HP. | 0 or positive integer |
+| updates.*_fleet.*[].max_hp | integer | Maximum HP when supplied by the packet. | positive integer |
+| updates.*_fleet.*[].damage | string | Derived damage state. | normal, minor_damage_or_scratch, moderate_damage, heavy_damage, zero_or_sunk, unknown |
+
+Enemy HP arrays can contain non-numeric placeholders such as `"N/A"` for a
+special enemy unit. The receiver preserves that unit and displays
+`hp: "N/A/N/A"` with `damage: "unknown"`; it must not treat the placeholder as
+zero or discard the ship.
+
 | element | data type | description | possible value |
 |---|---|---|---|
 | event | string | Exporter-generated event name. This is not a native KanColle API field; it is the plugin's classification result. | map_start_request, map_start_response, map_next_request, map_next_response, sortie_battle_request, sortie_battle_response, sortie_air_battle_request, sortie_air_battle_response, sortie_ld_shooting_request, sortie_ld_shooting_response, night_to_day_request, night_to_day_response, midnight_battle_request, midnight_battle_response, combined_battle_request, combined_battle_response, combined_air_battle_request, combined_air_battle_response, combined_each_battle_request, combined_each_battle_response, combined_battle_water_request, combined_battle_water_response, combined_midnight_battle_request, combined_midnight_battle_response, combined_battle_result_request, combined_battle_result_response, practice_battle_request, practice_battle_response, practice_midnight_battle_request, practice_midnight_battle_response, practice_battle_result_request, practice_battle_result_response, ship2_update_response, ship3_update_response, deck_update_response, battle_result, day_battle_hp_update, night_battle_prompt_expected, night_battle_selected |
