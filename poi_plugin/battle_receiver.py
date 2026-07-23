@@ -57,6 +57,7 @@ JsonDict = Dict[str, Any]
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+DEFAULT_FORMATION_HISTORY_PATH = Path("poi_formation_history.json")
 IGNORED_LOG_EVENTS = {
     "game_start_response",
     "require_info_response",
@@ -443,6 +444,32 @@ def load_receiver_context(path: Path) -> tuple[Dict[Any, str], Optional[JsonDict
     return map_names, last_selected_formation
 
 
+def load_formation_history(path: Path) -> Dict[str, JsonDict]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        key: value
+        for key, value in data.items()
+        if isinstance(key, str) and isinstance(value, dict)
+    }
+
+
+def save_formation_history(path: Path, history: Dict[str, JsonDict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    temporary_path.write_text(
+        json.dumps(history, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary_path.replace(path)
+
+
 def prune_empty(value: Any) -> Any:
     """Remove unavailable fields while preserving valid 0/False values."""
     if isinstance(value, dict):
@@ -566,6 +593,7 @@ def build_unified_updates(
     ship_names: Dict[int, str],
     map_names: Dict[Any, str],
     last_selected_formation: Optional[JsonDict],
+    formation_history_hint: Optional[JsonDict],
 ) -> JsonDict:
     """Convert an unchanged plugin payload into receiver-owned partial updates."""
     updates: JsonDict = {}
@@ -626,12 +654,36 @@ def build_unified_updates(
             map_data.get("api_event_id"),
             map_data.get("api_event_kind"),
         )
-        map_update["node_type"] = node_type(
+        current_node_type = node_type(
             map_data.get("api_event_id"),
             map_data.get("api_event_kind"),
             map_data.get("api_color_no"),
         )
+        map_update["node_type"] = current_node_type
         updates["map"] = prune_empty(map_update)
+
+        if event.get("event") in {"map_start_response", "map_next_response"}:
+            prompt_timing = event.get("event")
+            history_key = (
+                formation_history_hint.get("key")
+                if formation_history_hint
+                else (
+                    f"{map_id}-{map_data.get('api_no')}"
+                    if map_id is not None and map_data.get("api_no") is not None
+                    else None
+                )
+            )
+            updates["formation"] = {
+                "prompt_timing": prompt_timing,
+                "history_key": history_key,
+                "last_selected": formation_history_hint
+                or {
+                    "value": None,
+                    "name": "Unknown",
+                    "key": history_key,
+                    "known": False,
+                },
+            }
 
         enemy_preview = []
         for deck in map_data.get("api_e_deck_info") or []:
@@ -651,28 +703,40 @@ def build_unified_updates(
         if enemy_preview:
             updates["enemy_preview"] = enemy_preview
 
-    formation = response_data.get("api_formation")
-    selected_formation = (
-        request_body.get("api_formation") if isinstance(request_body, dict) else None
-    )
-    if selected_formation is None and isinstance(formation, list) and formation:
-        selected_formation = formation[0]
-    formation_update = {
-        "friendly": named_value(selected_formation, FORMATION_NAMES),
-        "enemy": named_value(
-            formation[1] if isinstance(formation, list) and len(formation) > 1 else None,
-            FORMATION_NAMES,
-        ),
-        "engagement": named_value(
-            formation[2] if isinstance(formation, list) and len(formation) > 2 else None,
-            ENGAGEMENT_NAMES,
-        ),
-    }
-    if last_selected_formation and any(formation_update.values()):
-        formation_update["last_selected"] = last_selected_formation
-    formation_update = prune_empty(formation_update)
-    if formation_update:
-        updates["formation"] = formation_update
+    if event.get("event") not in {
+        "map_start_response",
+        "map_next_response",
+        "day_battle_hp_update",
+        "battle_result",
+    }:
+        formation = response_data.get("api_formation")
+        selected_formation = (
+            request_body.get("api_formation")
+            if isinstance(request_body, dict)
+            else None
+        )
+        if selected_formation is None and isinstance(formation, list) and formation:
+            selected_formation = formation[0]
+        formation_update = {
+            "friendly": named_value(selected_formation, FORMATION_NAMES),
+            "enemy": named_value(
+                formation[1]
+                if isinstance(formation, list) and len(formation) > 1
+                else None,
+                FORMATION_NAMES,
+            ),
+            "engagement": named_value(
+                formation[2]
+                if isinstance(formation, list) and len(formation) > 2
+                else None,
+                ENGAGEMENT_NAMES,
+            ),
+        }
+        if last_selected_formation and any(formation_update.values()):
+            formation_update["last_selected"] = last_selected_formation
+        formation_update = prune_empty(formation_update)
+        if formation_update:
+            updates["formation"] = formation_update
 
     if "api_midnight_flag" in response_data:
         midnight_flag = response_data.get("api_midnight_flag")
@@ -724,31 +788,6 @@ def build_unified_updates(
 
     day_hp = event.get("day_battle_hp")
     if isinstance(day_hp, dict):
-        day_formation = day_hp.get("api_formation")
-        day_formation_update = {
-            "friendly": named_value(
-                day_formation[0]
-                if isinstance(day_formation, list) and day_formation
-                else None,
-                FORMATION_NAMES,
-            ),
-            "enemy": named_value(
-                day_formation[1]
-                if isinstance(day_formation, list) and len(day_formation) > 1
-                else None,
-                FORMATION_NAMES,
-            ),
-            "engagement": named_value(
-                day_formation[2]
-                if isinstance(day_formation, list) and len(day_formation) > 2
-                else None,
-                ENGAGEMENT_NAMES,
-            ),
-            "last_selected": last_selected_formation,
-        }
-        day_formation_update = prune_empty(day_formation_update)
-        if day_formation_update:
-            updates["formation"] = day_formation_update
         if "api_midnight_flag" in day_hp:
             midnight_flag = day_hp.get("api_midnight_flag")
             updates["night_battle"] = {
@@ -821,23 +860,6 @@ def build_unified_updates(
                     "api_no": battle_result.get("map_cell"),
                 }
             )
-        result_formation = {
-            "friendly": named_value(
-                last_selected_formation.get("value")
-                if isinstance(last_selected_formation, dict)
-                else None,
-                FORMATION_NAMES,
-            ),
-            "enemy": named_value(
-                battle_result.get("enemy_formation"),
-                FORMATION_NAMES,
-            ),
-            "last_selected": last_selected_formation,
-        }
-        result_formation = prune_empty(result_formation)
-        if result_formation:
-            updates["formation"] = result_formation
-
         snapshot_by_iid = {}
         for fleet in fleets or []:
             for ship in fleet.get("ships") or []:
@@ -1007,6 +1029,7 @@ class ViewerConfig:
     show_full_body: bool = False
     show_fleet: bool = True
     show_only_battle_summary: bool = False
+    formation_history_path: Path = DEFAULT_FORMATION_HISTORY_PATH
 
 
 @dataclass
@@ -1068,10 +1091,40 @@ class PoiEventPrinter:
         self.map_names, self.last_selected_formation = load_receiver_context(
             config.log_path
         )
+        self.formation_history = load_formation_history(
+            config.formation_history_path
+        )
+        self.current_spot_key: Optional[str] = None
+        self.current_map_id: Optional[int] = None
+        self.current_api_no: Optional[int] = None
+        self.current_formation_hint: Optional[JsonDict] = None
         self.packet_no = load_last_packet_no(config.log_path)
 
-    def observe_event(self, event: JsonDict) -> None:
+    def observe_event(self, event: JsonDict) -> Optional[JsonDict]:
         """Update display caches even when an event is intentionally not logged."""
+        map_data = extract_map_response(event)
+        if map_data:
+            maparea_id = map_data.get("api_maparea_id")
+            mapinfo_no = map_data.get("api_mapinfo_no")
+            api_no = map_data.get("api_no")
+            map_id = (
+                maparea_id * 10 + mapinfo_no
+                if isinstance(maparea_id, int) and isinstance(mapinfo_no, int)
+                else None
+            )
+            if isinstance(map_id, int) and isinstance(api_no, int):
+                self.current_map_id = map_id
+                self.current_api_no = api_no
+                self.current_spot_key = f"{map_id}-{api_no}"
+                self.current_formation_hint = self.formation_history.get(
+                    self.current_spot_key
+                )
+            else:
+                self.current_spot_key = None
+                self.current_map_id = None
+                self.current_api_no = None
+                self.current_formation_hint = None
+
         request_body = event.get("request_body")
         selected_formation = (
             request_body.get("api_formation")
@@ -1091,42 +1144,63 @@ class PoiEventPrinter:
             self.last_selected_formation = prune_empty(
                 {
                     **named,
+                    "key": self.current_spot_key,
+                    "map_id": self.current_map_id,
+                    "api_no": self.current_api_no,
                     "source": selection_source,
                     "event": event.get("event"),
                     "event_id": event.get("event_id"),
                     "seq": event.get("seq"),
+                    "updated_at": datetime.now().astimezone().isoformat(
+                        timespec="milliseconds"
+                    ),
                 }
             )
+            if self.current_spot_key:
+                self.formation_history[
+                    self.current_spot_key
+                ] = self.last_selected_formation
+                self.current_formation_hint = self.last_selected_formation
+                try:
+                    save_formation_history(
+                        self.config.formation_history_path,
+                        self.formation_history,
+                    )
+                except OSError as exc:
+                    return {
+                        "code": "formation_history_write_failed",
+                        "message": str(exc),
+                    }
 
-        if event.get("event") != "game_start_response":
-            return
+        if event.get("event") == "game_start_response":
+            master_data = extract_response_data(event)
+            ships = master_data.get("api_mst_ship")
+            if isinstance(ships, list):
+                for ship in ships:
+                    if not isinstance(ship, dict):
+                        continue
+                    ship_id = ship.get("api_id")
+                    ship_name = ship.get("api_name")
+                    if isinstance(ship_id, int) and isinstance(ship_name, str):
+                        self.ship_names[ship_id] = ship_name
 
-        master_data = extract_response_data(event)
-        ships = master_data.get("api_mst_ship")
-        if isinstance(ships, list):
-            for ship in ships:
-                if not isinstance(ship, dict):
-                    continue
-                ship_id = ship.get("api_id")
-                ship_name = ship.get("api_name")
-                if isinstance(ship_id, int) and isinstance(ship_name, str):
-                    self.ship_names[ship_id] = ship_name
+            maps = master_data.get("api_mst_mapinfo")
+            if isinstance(maps, list):
+                for map_info in maps:
+                    if not isinstance(map_info, dict):
+                        continue
+                    map_id = map_info.get("api_id")
+                    maparea_id = map_info.get("api_maparea_id")
+                    mapinfo_no = map_info.get("api_no")
+                    map_name = map_info.get("api_name")
+                    if not isinstance(map_name, str):
+                        continue
+                    if isinstance(map_id, int):
+                        self.map_names[map_id] = map_name
+                    if isinstance(maparea_id, int) and isinstance(mapinfo_no, int):
+                        self.map_names[(maparea_id, mapinfo_no)] = map_name
 
-        maps = master_data.get("api_mst_mapinfo")
-        if isinstance(maps, list):
-            for map_info in maps:
-                if not isinstance(map_info, dict):
-                    continue
-                map_id = map_info.get("api_id")
-                maparea_id = map_info.get("api_maparea_id")
-                mapinfo_no = map_info.get("api_no")
-                map_name = map_info.get("api_name")
-                if not isinstance(map_name, str):
-                    continue
-                if isinstance(map_id, int):
-                    self.map_names[map_id] = map_name
-                if isinstance(maparea_id, int) and isinstance(mapinfo_no, int):
-                    self.map_names[(maparea_id, mapinfo_no)] = map_name
+        return None
 
     def next_packet_no(self) -> int:
         self.packet_no += 1
@@ -1147,6 +1221,7 @@ class PoiEventPrinter:
                 self.ship_names,
                 self.map_names,
                 self.last_selected_formation,
+                self.current_formation_hint,
             )
             if include_updates
             else {}
@@ -1185,11 +1260,11 @@ class PoiEventPrinter:
         separator()
 
     def print_event(self, event: JsonDict) -> None:
-        self.observe_event(event)
+        observe_error = self.observe_event(event)
         record = self.make_record(
             event,
             accepted=True,
-            error=packet_error_for_event(event),
+            error=observe_error or packet_error_for_event(event),
         )
         self.print_record(record)
 
@@ -1677,7 +1752,7 @@ def make_handler(config: ViewerConfig):
 
             # This event is excluded from JSONL, but its master data lets the
             # console display enemy ship names instead of IDs alone.
-            printer.observe_event(event)
+            observe_error = printer.observe_event(event)
 
             if should_ignore_log_event(event):
                 delivery_state.record(event)
@@ -1688,7 +1763,7 @@ def make_handler(config: ViewerConfig):
                 record = printer.make_record(
                     event,
                     accepted=True,
-                    error=packet_error_for_event(event),
+                    error=observe_error or packet_error_for_event(event),
                 )
             except Exception as exc:
                 record = printer.make_record(
@@ -1816,6 +1891,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", type=Path, default=default_log_path())
     parser.add_argument(
+        "--formation-history",
+        type=Path,
+        default=DEFAULT_FORMATION_HISTORY_PATH,
+        help="Persistent per-map-node formation history JSON file.",
+    )
+    parser.add_argument(
         "--full-body",
         action="store_true",
         help="Include the unchanged raw plugin event in each unified log/console record.",
@@ -1841,6 +1922,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         show_full_body=args.full_body,
         show_fleet=not args.no_fleet,
         show_only_battle_summary=args.summary_only,
+        formation_history_path=args.formation_history,
     )
 
     if config.log_path.exists():
@@ -1852,6 +1934,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     server = HTTPServer((args.host, args.port), handler)
 
     print(f"Listening on http://{args.host}:{args.port}/poi-event")
+    print(f"Formation history: {config.formation_history_path.resolve()}")
     print(f"Plugin load confirmation: http://{args.host}:{args.port}/poi-plugin-loaded")
     print(f"Health check: http://{args.host}:{args.port}/health")
     print("Start poi, enable Battle Event Exporter, then run sortie/practice.")

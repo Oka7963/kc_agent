@@ -40,7 +40,7 @@ which the current packet contains usable data appear under `updates`.
 Receiver `error.code` values currently include `missing_event`, `api_error`,
 `simulation_invalid`, `duplicate`, `out_of_order`, `unsupported_path`,
 `invalid_content_length`, `invalid_json_type`, `bad_json`, and
-`processing_error`, `log_write_failed`.
+`processing_error`, `formation_history_write_failed`, `log_write_failed`.
 
 Important normalized update fields:
 
@@ -52,7 +52,8 @@ Important normalized update fields:
 | updates.formation.friendly | object | Current friendly formation. | `{value,name}` |
 | updates.formation.enemy | object | Current enemy formation. | `{value,name}` |
 | updates.formation.engagement | object | Engagement type. | `{value,name}` |
-| updates.formation.last_selected | object | Most recently observed explicit `request_body.api_formation`, including source event/seq. | `{value,name,source,event,event_id,seq}` |
+| updates.formation.last_selected | object | Per-node previous formation on `map_start_response` or `map_next_response`; when no history exists, `name` is `Unknown` and `known` is false. Other battle packets may contain the most recently observed explicit `request_body.api_formation`. | `{value,name,source,event,event_id,seq}` or `{name:"Unknown",key,known:false}` |
+| updates.formation.prompt_timing | string | Marks a per-node formation-history hint emitted before the new formation selection. | map_start_response, map_next_response |
 | updates.player_fleet.*[].hp | string | Readable friendly HP. | current/max, e.g. `7/30` |
 | updates.enemy_fleet.*[].hp | string | Readable enemy HP. | current/max, e.g. `0/33` |
 | updates.*_fleet.*[].now_hp | integer | Current display HP. | 0 or positive integer |
@@ -63,6 +64,36 @@ Enemy HP arrays can contain non-numeric placeholders such as `"N/A"` for a
 special enemy unit. The receiver preserves that unit and displays
 `hp: "N/A/N/A"` with `damage: "unknown"`; it must not treat the placeholder as
 zero or discard the ship.
+
+Per-node formation history
+
+`battle_receiver.py` stores formation history independently from timestamped
+event logs. The default file is `poi_formation_history.json` and can be changed
+with `--formation-history`. Keys follow Prophet's map-node style:
+
+```json
+{
+  "13-5": {
+    "key": "13-5",
+    "map_id": 13,
+    "api_no": 5,
+    "value": 1,
+    "name": "單縱陣",
+    "source": "request_body.api_formation",
+    "event": "sortie_battle_response",
+    "event_id": "session:seq",
+    "seq": 62,
+    "updated_at": "2026-07-23T12:34:56.789+09:00"
+  }
+}
+```
+
+The history is updated by a battle response after the selected formation is
+known. Every `map_start_response` and `map_next_response` emits
+`updates.formation`; the receiver uses the keyed record when one exists,
+otherwise it emits
+`last_selected.name = "Unknown"` with `known = false`.
+`day_battle_hp_update` and `battle_result` do not emit `updates.formation`.
 
 | element | data type | description | possible value |
 |---|---|---|---|
